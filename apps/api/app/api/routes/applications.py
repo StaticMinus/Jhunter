@@ -402,3 +402,50 @@ async def reject_application(
         documents=[DocumentResponse.model_validate(d) for d in docs],
         answers=[ApplicationAnswerResponse.model_validate(ans) for ans in answers]
     )
+
+
+@router.post("/auto-apply")
+async def trigger_auto_apply_all(
+    min_score: int = 80,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Scans all high-match jobs in the database and automatically:
+    1. Generates tailored cover letter
+    2. Sends email via Gmail with David's CV attached
+    3. Marks application as APPLIED in Kanban
+    4. Sends instant Telegram confirmation receipt
+    """
+    from app.services.auto_applier import AutoApplier
+    profile = await get_or_create_default_profile(db)
+
+    # Find all matches >= min_score
+    stmt = (
+        select(Job, JobMatch)
+        .join(JobMatch, JobMatch.job_id == Job.id)
+        .where(JobMatch.match_score >= min_score)
+        .order_by(desc(JobMatch.match_score))
+    )
+    res = await db.execute(stmt)
+    pairs = res.all()
+
+    applied_results = []
+    for job, match in pairs:
+        result = await AutoApplier.process_job(
+            db=db,
+            job=job,
+            profile=profile,
+            match_score=match.match_score,
+            opportunity_score=match.opportunity_score,
+            explanation=match.explanation_json or {}
+        )
+        if result:
+            applied_results.append(result)
+
+    return {
+        "status": "success",
+        "processed_count": len(pairs),
+        "auto_applied_count": len(applied_results),
+        "applications": applied_results
+    }
+

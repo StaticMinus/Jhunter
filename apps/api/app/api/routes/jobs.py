@@ -599,10 +599,39 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
 
     await db.commit()
 
+    # ── Auto-Apply to all high-fit jobs discovered during scan ──
+    from app.services.auto_applier import AutoApplier
+    stmt = (
+        select(Job, JobMatch)
+        .join(JobMatch, JobMatch.job_id == Job.id)
+        .where(JobMatch.match_score >= 80)
+        .order_by(desc(JobMatch.match_score))
+    )
+    res = await db.execute(stmt)
+    high_matches = res.all()
+
+    auto_applied_count = 0
+    for j_obj, match in high_matches:
+        try:
+            applied = await AutoApplier.process_job(
+                db=db,
+                job=j_obj,
+                profile=profile,
+                match_score=match.match_score,
+                opportunity_score=match.opportunity_score,
+                explanation=match.explanation_json or {}
+            )
+            if applied:
+                auto_applied_count += 1
+        except Exception as e:
+            print(f"Auto-apply error on job {j_obj.id}: {e}")
+
     return {
         "status": "success",
         "message": f"Global scan completed: ReliefWeb, RemoteOK, UN Jobs, Devex, Visa Sponsorship Boards — worldwide coverage.",
         "scanned_count": max(scanned_count, 20),
-        "new_jobs_added": new_jobs_added
+        "new_jobs_added": new_jobs_added,
+        "auto_applied_count": auto_applied_count
     }
+
 
