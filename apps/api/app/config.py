@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # ─── Candidate CV ───
+    cv_pdf_path: str = "cv_david_ict_specialist.pdf"
+    cv_filename: str = "Cv_David_ICT_Specialist.pdf"
+
     # ─── CORS ───
     cors_origins: list[str] = ["http://localhost:3000"]
 
