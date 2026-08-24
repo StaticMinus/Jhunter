@@ -597,7 +597,60 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
         except Exception as e:
             print(f"Error scanning Visa Sponsorship board: {e}")
 
+    # 6. Scan Global Fellowships & Leadership Residencies (Fully Funded / Sponsored)
+    from workers.adapters.global_fellowships import GlobalFellowshipAdapter
+    fellowship_adapter = GlobalFellowshipAdapter()
+    try:
+        fellowships = await fellowship_adapter.search(query="fellowship")
+        scanned_count += len(fellowships)
+        for j in fellowships:
+            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
+            if not is_dup:
+                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
+                job_obj = Job(
+                    canonical_url=j["canonical_url"],
+                    title=j["title"],
+                    employer=j["employer"],
+                    location=j["location"],
+                    work_mode=j["work_mode"],
+                    salary_min=j["salary_min"],
+                    salary_max=j["salary_max"],
+                    currency=j["currency"],
+                    description=j["description"],
+                    posted_at=datetime.now(timezone.utc),
+                    raw_hash=raw_hash
+                )
+                db.add(job_obj)
+                await db.flush()
+
+                features = JobFeature(
+                    job_id=job_obj.id,
+                    skills_json=["lan/wan & tcp/ip networking", "cybersecurity & ids/ips", "cloud architecture", "ict4d & humanitarian technology"],
+                    seniority="Senior",
+                    industry="International Leadership & Tech Fellowship",
+                    visa_signal="sponsored",
+                    remote_signal="relocation_offered",
+                    extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
+                )
+                db.add(features)
+                await db.flush()
+
+                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
+                    profile_data=prof_dict, job_data=j,
+                    job_features={"skills_json": features.skills_json, "visa_signal": "sponsored"}
+                )
+                db.add(JobMatch(
+                    job_id=job_obj.id, profile_id=profile.id,
+                    match_score=match_score, opportunity_score=opp_score,
+                    explanation_json=explanation, gaps_json=gaps
+                ))
+                existing_jobs.append(j)
+                new_jobs_added += 1
+    except Exception as e:
+        print(f"Error scanning Global Fellowships: {e}")
+
     await db.commit()
+
 
     # ── Auto-Apply to all high-fit jobs discovered during scan ──
     from app.services.auto_applier import AutoApplier

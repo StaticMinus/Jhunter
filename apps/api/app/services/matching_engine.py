@@ -78,8 +78,10 @@ class MatchingEngine:
         is_tech_role = any(kw in job_title for kw in [
             "it", "ict", "software", "network", "system", "security", "developer", "cloud",
             "engineer", "infrastructure", "devops", "cyber", "technology", "data", "admin",
-            "telecom", "architect", "support", "technical", "ict4d", "digital"
+            "telecom", "architect", "support", "technical", "ict4d", "digital", "fellow",
+            "fellowship", "leadership", "residency", "visiting"
         ])
+
         is_unrelated_role = any(kw in job_title for kw in [
             "finance", "grants", "accountant", "nurse", "medical", "child survival",
             "procurement", "supply chain", "legal counsel", "hr generalist", "driver"
