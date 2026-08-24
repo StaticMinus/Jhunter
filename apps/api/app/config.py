@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # ─── Google OAuth2 ───
     google_client_id: str = ""
     google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
 
     # ─── Gemini AI ───
     gemini_api_key: str = ""

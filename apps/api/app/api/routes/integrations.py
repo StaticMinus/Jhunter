@@ -34,13 +34,22 @@ async def get_gmail_status():
     )
 
 
+from app.config import settings
+
 @router.post("/gmail/connect")
 async def connect_gmail(db: AsyncSession = Depends(get_db)):
     db.add(AuditLog(action="CONNECT_GMAIL_OAUTH", entity_type="integration"))
     await db.commit()
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={settings.google_client_id}&"
+        f"redirect_uri={settings.google_redirect_uri}&"
+        f"scope=https://www.googleapis.com/auth/gmail.send+https://www.googleapis.com/auth/gmail.readonly&"
+        f"response_type=code&access_type=offline&prompt=consent"
+    )
     return {
         "status": "success",
-        "auth_url": "https://accounts.google.com/o/oauth2/v2/auth?scope=https://www.googleapis.com/auth/gmail.send+https://www.googleapis.com/auth/gmail.readonly&response_type=code"
+        "auth_url": auth_url
     }
 
 
