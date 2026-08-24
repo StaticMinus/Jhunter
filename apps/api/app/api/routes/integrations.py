@@ -2,15 +2,19 @@
 AI Job Hunter — Gmail & Telegram Integration Routes
 """
 
-from fastapi import APIRouter, Depends
+import json
+import logging
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.session import session_factory
-from app.models import Notification, AuditLog
+from app.models import Notification, AuditLog, User
 from app.schemas import GmailStatusResponse, TelegramStatusResponse, KPISummaryResponse
 from app.models import Job, JobMatch, Application
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -25,11 +29,16 @@ async def get_db():
 
 
 @router.get("/gmail/status", response_model=GmailStatusResponse)
-async def get_gmail_status():
+async def get_gmail_status(db: AsyncSession = Depends(get_db)):
+    """Returns real Gmail connection status from the database."""
+    user_res = await db.execute(select(User).limit(1))
+    user = user_res.scalar_one_or_none()
+    connected = bool(user and user.google_tokens_encrypted)
+    real_email = user.email if (user and connected) else ""
     return GmailStatusResponse(
-        connected=True,
-        email="david.hunter@example.com",
-        sync_active=True,
+        connected=connected,
+        email=real_email,
+        sync_active=connected,
         applied_label_id="Label_AI_JOB_HUNTER_APPLIED"
     )
 
@@ -70,13 +79,26 @@ async def test_telegram_alert(db: AsyncSession = Depends(get_db)):
     db.add(AuditLog(action="TEST_TELEGRAM_NOTIFICATION", entity_type="notification"))
     await db.commit()
 
-    sample_job = {
-        "title": "ICT Specialist & Systems Administrator",
-        "employer": "International Humanitarian Health Org",
-        "location": "Abuja, Nigeria",
-        "work_mode": "hybrid",
-        "canonical_url": "https://reliefweb.int/job/ict-specialist-abuja"
-    }
+    # Query the latest real job from the database
+    result = await db.execute(select(Job).order_by(Job.created_at.desc()).limit(1))
+    latest_job = result.scalars().first()
+
+    if latest_job:
+        sample_job = {
+            "title": latest_job.title,
+            "employer": latest_job.employer,
+            "location": latest_job.location,
+            "work_mode": latest_job.work_mode,
+            "canonical_url": latest_job.canonical_url
+        }
+    else:
+        sample_job = {
+            "title": "Senior Systems & Cloud Infrastructure Lead",
+            "employer": "Global Tech Operations",
+            "location": "Abuja, Nigeria / Remote",
+            "work_mode": "remote",
+            "canonical_url": "https://reliefweb.int/jobs"
+        }
 
     sent = False
     if settings.telegram_bot_token and settings.telegram_chat_id:
@@ -84,12 +106,12 @@ async def test_telegram_alert(db: AsyncSession = Depends(get_db)):
             bot_token=settings.telegram_bot_token,
             chat_id=settings.telegram_chat_id,
             job_data=sample_job,
-            match_score=94,
-            opportunity_score=97,
+            match_score=96,
+            opportunity_score=98,
             reasons=[
-                "Humanitarian ICT & telecommunications experience directly aligned",
-                "Strong match: Active Directory, Starlink, IDS/IPS, and disaster recovery",
-                "Visa/relocation support officially indicated"
+                "Enterprise Systems & Cloud Infrastructure expertise directly matched",
+                "High match: Active Directory, Starlink, IDS/IPS, Python, and disaster recovery",
+                "Work mode and location preferences perfectly aligned"
             ]
         )
 
@@ -127,3 +149,108 @@ async def get_kpi_summary(db: AsyncSession = Depends(get_db)):
         rejected=rejected,
         response_rate_percent=round(response_rate, 1)
     )
+
+
+@router.post("/telegram/webhook")
+async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Telegram Bot webhook — processes button callback_data from inline keyboards.
+    Telegram calls this endpoint whenever David taps:
+      - [🚀 Approve & Apply via Gmail]  →  approve_{application_id}
+      - [❌ Skip / Archive]             →  reject_{application_id}
+      - [📝 Review Package in Studio]   →  review_{application_id}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": True})
+
+    # Only handle callback_query (button taps), ignore plain messages
+    callback = body.get("callback_query")
+    if not callback:
+        return JSONResponse({"ok": True})
+
+    callback_id = callback.get("id")
+    chat_id = callback.get("message", {}).get("chat", {}).get("id")
+    data = callback.get("data", "")
+
+    from app.config import settings
+    from app.services.telegram_service import TelegramService
+    import httpx
+
+    bot_token = settings.telegram_bot_token
+
+    async def answer_callback(text: str):
+        """Send a quick pop-up answer to the Telegram button tap."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+                    json={"callback_query_id": callback_id, "text": text, "show_alert": False}
+                )
+        except Exception:
+            pass
+
+    async def send_message(text: str):
+        """Send a follow-up status message to the chat."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+                )
+        except Exception:
+            pass
+
+    # ─── Route the action ───
+    if data.startswith("approve_"):
+        application_id = data.replace("approve_", "")
+        await answer_callback("Sending application with CV...")
+
+        # Import approve function and call it directly
+        from app.api.routes.applications import approve_application
+        try:
+            result = await approve_application(id=application_id, db=db)
+            job_res = await db.execute(select(Job).where(Job.id == result.job_id))
+            job = job_res.scalar_one_or_none()
+            title = job.title if job else "the position"
+            employer = job.employer if job else "the employer"
+            await send_message(
+                f"*Application Sent!*\n\n"
+                f"Your CV and cover letter for *{title}* at *{employer}* "
+                f"has been emailed from `davidolagbenro35@gmail.com`.\n\n"
+                f"_Application tracked in your dashboard._"
+            )
+            logger.info(f"Telegram APPROVE processed for application {application_id}")
+        except Exception as e:
+            logger.error(f"Telegram approve failed: {e}")
+            await answer_callback("Failed to send application. Check dashboard.")
+
+    elif data.startswith("reject_"):
+        application_id = data.replace("reject_", "")
+        stmt = select(Application).where(Application.id == application_id)
+        res = await db.execute(stmt)
+        app_obj = res.scalar_one_or_none()
+        if app_obj:
+            app_obj.status = "ARCHIVED"
+            app_obj.approval_state = "SKIP"
+            db.add(AuditLog(
+                action="REJECT_APPLICATION",
+                entity_type="application",
+                entity_id=application_id,
+                metadata_json={"source": "telegram_bot"}
+            ))
+            await db.commit()
+        await answer_callback("Job archived.")
+        await send_message("_Job archived and removed from your pipeline._")
+
+    elif data.startswith("review_"):
+        application_id = data.replace("review_", "")
+        await answer_callback("Opening review dashboard...")
+        await send_message(
+            f"*Open your dashboard to review:*\n"
+            f"[http://localhost:3000](http://localhost:3000)\n\n"
+            f"Application ID: `{application_id}`"
+        )
+
+    return JSONResponse({"ok": True})
