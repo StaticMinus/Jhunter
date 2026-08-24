@@ -753,7 +753,113 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         print(f"Error scanning Remotive: {e}")
 
+    # 9. Scan Jobicy for real-time live remote devops, security & sysadmin jobs
+    from workers.adapters.jobicy import JobicyAdapter
+    jobicy_adapter = JobicyAdapter()
+    for tag in ["devops", "security", "sysadmin"]:
+        try:
+            jobicy_jobs = await jobicy_adapter.search(query=tag)
+            scanned_count += len(jobicy_jobs)
+            for j in jobicy_jobs:
+                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
+                if not is_dup:
+                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
+                    job_obj = Job(
+                        canonical_url=j["canonical_url"],
+                        title=j["title"],
+                        employer=j["employer"],
+                        location=j["location"],
+                        work_mode=j["work_mode"],
+                        salary_min=j["salary_min"],
+                        salary_max=j["salary_max"],
+                        currency=j["currency"],
+                        description=j["description"],
+                        posted_at=datetime.now(timezone.utc),
+                        raw_hash=raw_hash
+                    )
+                    db.add(job_obj)
+                    await db.flush()
+
+                    features = JobFeature(
+                        job_id=job_obj.id,
+                        skills_json=["systems administration", "cloud infrastructure", "cybersecurity", "azure & cloud"],
+                        seniority="Senior",
+                        industry="Global Technology / SaaS",
+                        visa_signal="indicated",
+                        remote_signal="full_remote",
+                        extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
+                    )
+                    db.add(features)
+                    await db.flush()
+
+                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
+                        profile_data=prof_dict, job_data=j,
+                        job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
+                    )
+                    db.add(JobMatch(
+                        job_id=job_obj.id, profile_id=profile.id,
+                        match_score=match_score, opportunity_score=opp_score,
+                        explanation_json=explanation, gaps_json=gaps
+                    ))
+                    existing_jobs.append(j)
+                    new_jobs_added += 1
+        except Exception as e:
+            print(f"Error scanning Jobicy: {e}")
+
+    # 10. Scan Himalayas for real-time live remote tech & systems roles
+    from workers.adapters.himalayas import HimalayasAdapter
+    himalayas_adapter = HimalayasAdapter()
+    try:
+        him_jobs = await himalayas_adapter.search()
+        scanned_count += len(him_jobs)
+        for j in him_jobs:
+            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
+            if not is_dup:
+                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
+                job_obj = Job(
+                    canonical_url=j["canonical_url"],
+                    title=j["title"],
+                    employer=j["employer"],
+                    location=j["location"],
+                    work_mode=j["work_mode"],
+                    salary_min=j["salary_min"],
+                    salary_max=j["salary_max"],
+                    currency=j["currency"],
+                    description=j["description"],
+                    posted_at=datetime.now(timezone.utc),
+                    raw_hash=raw_hash
+                )
+                db.add(job_obj)
+                await db.flush()
+
+                features = JobFeature(
+                    job_id=job_obj.id,
+                    skills_json=["systems administration", "cloud infrastructure", "cybersecurity & ids/ips", "python & api development"],
+                    seniority="Senior",
+                    industry="Technology / Enterprise Software",
+                    visa_signal="possible",
+                    remote_signal="full_remote",
+                    extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
+                )
+                db.add(features)
+                await db.flush()
+
+                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
+                    profile_data=prof_dict, job_data=j,
+                    job_features={"skills_json": features.skills_json, "visa_signal": "possible"}
+                )
+                db.add(JobMatch(
+                    job_id=job_obj.id, profile_id=profile.id,
+                    match_score=match_score, opportunity_score=opp_score,
+                    explanation_json=explanation, gaps_json=gaps
+                ))
+                existing_jobs.append(j)
+                new_jobs_added += 1
+    except Exception as e:
+        print(f"Error scanning Himalayas: {e}")
+
     await db.commit()
+
 
 
 

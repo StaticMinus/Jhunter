@@ -12,8 +12,9 @@ from app.api.routes.jobs import trigger_job_scan
 
 logger = logging.getLogger(__name__)
 
-# Frequency in seconds (60 = 1 minute for continuous, no-cooldown global sweeping)
-SCAN_INTERVAL_SECONDS = 60
+# Frequency in seconds (15 = 15 seconds for continuous, non-stop real-time sweeping)
+SCAN_INTERVAL_SECONDS = 15
+
 
 
 
