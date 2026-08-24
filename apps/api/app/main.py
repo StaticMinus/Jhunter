@@ -1,0 +1,64 @@
+"""
+AI Job Hunter — FastAPI Application Entrypoint
+Structured according to ECC fastapi-patterns.
+"""
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.config import settings
+from app.db.session import init_db, close_db
+from app.api.routes import auth, candidate, jobs, applications, integrations, notifications
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager for startup and shutdown hooks."""
+    try:
+        await init_db()
+    except Exception as e:
+        print(f"Database init warning (will use cross-dialect session): {e}")
+    yield
+    await close_db()
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="AI Job Hunter API",
+        version="0.1.0",
+        description="Autonomous Executive Recruitment Intelligence & Application Assistant API",
+        lifespan=lifespan
+    )
+
+    # CORS configuration
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Router registrations
+    app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+    app.include_router(candidate.router, prefix="/api/candidate", tags=["candidate"])
+    app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+    app.include_router(applications.router, prefix="/api/applications", tags=["applications"])
+    app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
+    app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+
+    @app.get("/health")
+    async def health_check():
+        return {
+            "status": "healthy",
+            "service": "AI Job Hunter Backend",
+            "version": settings.app_version,
+            "engine": "FastAPI + SQLAlchemy Async"
+        }
+
+    return app
+
+
+app = create_app()

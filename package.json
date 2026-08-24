@@ -1,0 +1,15 @@
+{
+  "name": "jhunter-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm --prefix apps/web run dev",
+    "build": "npm --prefix apps/web run build",
+    "start": "npm --prefix apps/web run start",
+    "test:backend": "python -c \"import sys; sys.path.append('apps/api'); import tests.test_scoring as ts; import tests.test_dedup as td; ts.test_match_score_calculation(); ts.test_anti_fabrication_application_generation(); ts.test_unknown_signals_not_penalized_harshly(); td.test_url_normalization(); td.test_duplicate_detection(); print('ALL SUITES PASSED!')\""
+  }
+}

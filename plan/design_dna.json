@@ -1,0 +1,111 @@
+{
+  "design_system": {
+    "color": {
+      "mode": "dark",
+      "primary": {
+        "hex": "#06B6D4",
+        "name": "Electric Cyan",
+        "role": "Primary brand accent, interactive elements, high-signal highlights"
+      },
+      "secondary": {
+        "hex": "#3B82F6",
+        "name": "Cobalt Blue",
+        "role": "Secondary action items, info indicators, system links"
+      },
+      "accent": {
+        "hex": "#10B981",
+        "name": "Emerald Signal",
+        "role": "Match score >= 85%, verified facts, success states"
+      },
+      "opportunity": {
+        "hex": "#F59E0B",
+        "name": "Amber Gold",
+        "role": "High opportunity score, visa sponsorship indicated, premium leads"
+      },
+      "surface": {
+        "background": "#080B11",
+        "card": "rgba(17, 24, 39, 0.70)",
+        "card_hover": "rgba(30, 41, 59, 0.85)",
+        "border": "rgba(255, 255, 255, 0.08)",
+        "border_glow": "rgba(6, 182, 212, 0.35)"
+      },
+      "text": {
+        "primary": "#F9FAFB",
+        "secondary": "#9CA3AF",
+        "muted": "#6B7280"
+      }
+    },
+    "typography": {
+      "font_families": {
+        "heading": "Outfit, system-ui, -apple-system, sans-serif",
+        "body": "Inter, system-ui, -apple-system, sans-serif",
+        "mono": "JetBrains Mono, monospace"
+      },
+      "scale": {
+        "xs": "0.75rem",
+        "sm": "0.875rem",
+        "base": "1rem",
+        "lg": "1.125rem",
+        "xl": "1.25rem",
+        "2xl": "1.5rem",
+        "3xl": "1.875rem",
+        "4xl": "2.25rem"
+      }
+    },
+    "shape": {
+      "border_radius": {
+        "small": "6px",
+        "medium": "12px",
+        "large": "16px",
+        "pill": "9999px"
+      }
+    },
+    "elevation": {
+      "glass": "0 8px 32px 0 rgba(0, 0, 0, 0.37)",
+      "glow_cyan": "0 0 20px rgba(6, 182, 212, 0.25)",
+      "glow_emerald": "0 0 20px rgba(16, 185, 129, 0.25)",
+      "glow_amber": "0 0 20px rgba(245, 158, 11, 0.25)"
+    },
+    "motion": {
+      "easing": "cubic-bezier(0.16, 1, 0.3, 1)",
+      "duration_scale": {
+        "micro": "150ms",
+        "normal": "300ms",
+        "macro": "500ms"
+      }
+    }
+  },
+  "design_style": {
+    "aesthetic": {
+      "mood": "Sovereign Executive Intelligence, Precision Tech, Ultra-Luxury Dark Elegance",
+      "contrast_level": "High-fidelity micro-contrast with glowing accents"
+    },
+    "visual_language": {
+      "surface_treatment": "Frosted Liquid Glass with dynamic refraction borders",
+      "whitespace_usage": "Generous executive spacing, breathing room for dense telemetry"
+    }
+  },
+  "visual_effects": {
+    "overview": {
+      "effect_intensity": "medium",
+      "performance_tier": "medium",
+      "fallback_strategy": "Static CSS blur and gradients on reduced motion"
+    },
+    "background_effects": {
+      "type": "mesh-gradient-ambient",
+      "enabled": true,
+      "parameters": {
+        "color1": "#0B1528",
+        "color2": "#051B1E",
+        "color3": "#080B11",
+        "animation_duration": "18s"
+      }
+    },
+    "glassmorphism": {
+      "type": "liquid-glass",
+      "blur_radius": "20px",
+      "transparency": 0.75,
+      "border_glow": true
+    }
+  }
+}

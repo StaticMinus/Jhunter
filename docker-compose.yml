@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: jhunter_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jhunter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jhunter_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-jhunter}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: jhunter_api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-jhunter}:${POSTGRES_PASSWORD:-jhunter_secret}@postgres:5432/${POSTGRES_DB:-jhunter}
+      SECRET_KEY: ${SECRET_KEY:-change_me_super_secret_key}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: jhunter_web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
