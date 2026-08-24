@@ -83,12 +83,13 @@ class AutoApplier:
         # Generate Clean Tailored Package
         pkg = ApplicationGenerator.generate_package(prof_dict, job_dict, explanation)
 
-        # ── 2. Resolve Genuine Employer HR Email ──
-        recruiter_email, method = HREmailResolver.resolve_recipient(
+        # ── 2. Resolve Genuine Employer HR Email (with live deep page scraping) ──
+        recruiter_email, method = await HREmailResolver.async_resolve_recipient(
             description=job.description or "",
             canonical_url=job.canonical_url or "",
             employer=job.employer or ""
         )
+
 
         # ── 3. Create Application Record in DB ──
         app_obj = Application(

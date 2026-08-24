@@ -67,5 +67,38 @@ class HREmailResolver:
             if not any(banned in domain for banned in BANNED_DOMAINS) and not any(clean.startswith(p) for p in IGNORED_PREFIXES):
                 return clean, "direct_email"
 
-        # 2. No direct email found -> strictly a portal application (do NOT invent domain emails)
+        # 2. No direct email found -> strictly a portal application
         return None, "portal_apply"
+
+    @classmethod
+    async def async_resolve_recipient(
+        cls,
+        description: str,
+        canonical_url: str = "",
+        employer: str = ""
+    ) -> Tuple[Optional[str], str]:
+        """
+        First checks description. If not found, live-scrapes the canonical job page for contact/application emails.
+        """
+        email, method = cls.resolve_recipient(description, canonical_url, employer)
+        if email:
+            return email, method
+
+        # Deep live fetch of canonical URL if available
+        if canonical_url and canonical_url.startswith("http"):
+            import httpx
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            try:
+                async with httpx.AsyncClient(timeout=8.0, headers=headers, follow_redirects=True) as client:
+                    res = await client.get(canonical_url)
+                    if res.status_code == 200:
+                        page_email, page_method = cls.resolve_recipient(res.text, "", employer)
+                        if page_email:
+                            return page_email, "direct_email"
+            except Exception:
+                pass
+
+        return None, "portal_apply"
+
