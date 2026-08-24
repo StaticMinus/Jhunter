@@ -37,14 +37,15 @@ class TelegramService:
 
         # Format Rich Markdown Card
         text = (
-            f"⚡ *HIGH-SIGNAL JOB MATCH DETECTED*\n\n"
+            f"⚡ *HIGH-SIGNAL MATCH DETECTED*\n\n"
             f"🎯 *Role*: `{title}`\n"
             f"🏢 *Employer*: {employer}\n"
             f"📍 *Location*: {location} ({work_mode})\n\n"
-            f"📊 *Match Score*: `{match_score}%` | *Opportunity*: `{opportunity_score}%` \n\n"
+            f"📊 *Match Score*: `{match_score}%` | *Opportunity*: `{opportunity_score}%`\n\n"
             f"💡 *Key Match Reasons*:\n"
             + "\n".join([f"• {r}" for r in reasons[:3]])
-            + f"\n\n🔗 [View Job Posting]({url})"
+            + f"\n\n🌐 *Application Method*: Online Employer Portal / ATS\n"
+            + f"📎 *CV*: Prepared (`Cv_David_ICT_Specialist.pdf`)"
         )
 
         # Inline Action Keyboard Buttons
@@ -52,18 +53,8 @@ class TelegramService:
             "inline_keyboard": [
                 [
                     {
-                        "text": "🚀 Approve & Apply via Gmail",
-                        "callback_data": f"approve_{application_id or 'demo'}"
-                    }
-                ],
-                [
-                    {
-                        "text": "📝 Review Package in Studio",
-                        "callback_data": f"review_{application_id or 'demo'}"
-                    },
-                    {
-                        "text": "❌ Skip / Archive",
-                        "callback_data": f"reject_{application_id or 'demo'}"
+                        "text": "🌐 Apply on Company Portal (1-Click)",
+                        "url": url if url.startswith("http") else "https://reliefweb.int"
                     }
                 ]
             ]
