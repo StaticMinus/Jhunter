@@ -1,7 +1,10 @@
-"""
-AI Job Hunter — FastAPI Application Entrypoint
-Structured according to ECC fastapi-patterns.
-"""
+import os
+import sys
+
+# Ensure workspace root is in sys.path for worker adapter discovery
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -13,6 +16,9 @@ from app.db.session import init_db, close_db
 from app.api.routes import auth, candidate, jobs, applications, integrations, notifications
 
 
+import asyncio
+from app.services.scheduler import autonomous_job_hunter_worker
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for startup and shutdown hooks."""
@@ -20,8 +26,20 @@ async def lifespan(app: FastAPI):
         await init_db()
     except Exception as e:
         print(f"Database init warning (will use cross-dialect session): {e}")
+
+    # Launch 24/7 autonomous background job hunter daemon
+    bg_task = asyncio.create_task(autonomous_job_hunter_worker())
+
     yield
+
+    # Graceful shutdown
+    bg_task.cancel()
+    try:
+        await bg_task
+    except asyncio.CancelledError:
+        pass
     await close_db()
+
 
 
 def create_app() -> FastAPI:

@@ -30,23 +30,22 @@ class ApplicationGenerator:
         job_loc = job.get("location", "Global")
         matched_skills = explanation.get("matched_skills", [])
         
-        # ── 1. Tailored Cover Letter ──
+        # ── 1. Concise, Humanized Cover Letter (No markdown asterisks or dashes) ──
         cover_letter = f"""Dear Hiring Team at {employer},
 
-I am writing to express my strong interest in the **{job_title}** position at {employer}. With extensive senior technical experience across enterprise infrastructure, cybersecurity, cloud architecture (Azure & Entra ID), full-stack Python/web engineering, and ICT4D operations, I am confident in delivering immediate value to your technology objectives.
+I am writing to express my interest in the {job_title} position at {employer}.
 
-In my recent work at RedAid Nigeria and Diverse Health Initiative, I spearheaded end-to-end ICT and security initiatives—including IDS/IPS deployment, Azure-integrated security API testing, Starlink satellite rollouts, and mission-critical web application development. My background in orchestrating multi-site network resilience, disaster recovery protocols, and full-stack software development directly aligns with the requirements of this role.
+With over eight years of experience leading enterprise IT systems, cybersecurity, cloud infrastructure, and mission-critical operations, I specialize in building resilient technology environments, managing complex network architectures, and delivering reliable technical solutions.
 
-Specifically, I bring verified expertise in:
-{chr(10).join([f"- **{skill.title()}**: Demonstrated across multi-year enterprise and NGO production deployments" for skill in matched_skills[:4]])}
+My background spans network security, systems administration, Azure and cloud services, and full-stack software engineering across both global enterprise and international NGO environments. I bring a practical, problem-solving approach and am open to remote, hybrid, or on-site roles worldwide, including relocation.
 
-I am available for remote, hybrid, or on-site roles globally and welcome relocation opportunities. I welcome the opportunity to discuss how my technical leadership, systems architecture experience, and problem-solving mindset will support {employer}'s mission. Thank you for your time and consideration.
+I have attached my CV for your review and would welcome the opportunity to discuss how my technical background can support {employer}.
 
 Sincerely,
-{candidate_name}
-Senior IT & Communication Specialist | ICT4D | Cybersecurity | Systems Engineer
-davidolagbenro35@gmail.com
-"""
+David Olagbenro
+Senior IT & Communication Specialist
+davidolagbenro35@gmail.com"""
+
 
         # ── 2. Tailored CV Variant ──
         experiences = profile.get("experiences", [])

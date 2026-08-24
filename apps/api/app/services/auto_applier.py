@@ -1,11 +1,10 @@
 """
 AI Job Hunter — Auto-Apply Engine
-Automatically generates tailored packages, dispatches application emails with CV attached,
+Automatically generates tailored packages, dispatches application emails with CV attached to HR,
 and sends instant Telegram receipts without waiting for manual approval.
 """
 
 import json
-import re
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -17,6 +16,7 @@ from app.models import Job, Application, Document, ApplicationAnswer, AuditLog, 
 from app.services.application_generator import ApplicationGenerator
 from app.services.gmail_service import GmailService
 from app.services.telegram_service import TelegramService
+from app.services.hr_email_resolver import HREmailResolver
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,11 @@ class AutoApplier:
     ) -> Optional[Dict[str, Any]]:
         """
         Evaluates a matched job. If match_score >= AUTO_APPLY_MATCH_THRESHOLD:
-        1. Generates tailored cover letter & documents
-        2. Dispatches email via Gmail API with CV attached
-        3. Records Application in DB with status APPLIED
-        4. Sends instant Telegram confirmation receipt to David
+        1. Resolves HR / recruiter email
+        2. Generates humanized, clean cover letter (no markdown * or -)
+        3. Dispatches email via Gmail API with CV attached directly to HR
+        4. Records Application in DB with status APPLIED
+        5. Sends instant Telegram confirmation receipt to David
         """
         if match_score < AUTO_APPLY_MATCH_THRESHOLD:
             return None
@@ -81,16 +82,26 @@ class AutoApplier:
             "description": job.description
         }
 
-        # Generate Tailored Package
+        # Generate Clean Tailored Package
         pkg = ApplicationGenerator.generate_package(prof_dict, job_dict, explanation)
 
-        # ── 2. Create Application Record in DB ──
+        # ── 2. Resolve HR / Recruiter Email Address ──
+        recruiter_email, method = HREmailResolver.resolve_recipient(
+            description=job.description or "",
+            canonical_url=job.canonical_url or "",
+            employer=job.employer or ""
+        )
+
+        # If direct email was found:
+        target_email = recruiter_email if recruiter_email else "davidolagbenro35@gmail.com"
+
+        # ── 3. Create Application Record in DB ──
         app_obj = Application(
             job_id=job.id,
             profile_id=profile.id,
             status="APPLIED",
             approval_state="AUTO",
-            method="email",
+            method=method,
             applied_at=datetime.now(timezone.utc)
         )
         db.add(app_obj)
@@ -112,26 +123,16 @@ class AutoApplier:
             storage_path=f"applications/{app_obj.id}/tailored_cv.md"
         ))
 
-        # ── 3. Extract Recruiter Email or Destination ──
-        recruiter_email = None
-        if job.description:
-            email_pattern = r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
-            found = re.findall(email_pattern, job.description)
-            if found:
-                recruiter_email = found[0]
-
-        if not recruiter_email:
-            # Smart fallback: send to David's verified Gmail so he has a copy ready to 1-click forward
-            recruiter_email = "davidolagbenro35@gmail.com"
-
-        # ── 4. Format HTML Body & Send via Gmail ──
-        cover_html = pkg["cover_letter"].replace("\n", "<br>")
+        # ── 4. Build Clean, Humanized HTML Body ──
+        clean_cover_html = "".join([f"<p style='margin:0 0 16px 0;line-height:1.6;'>{p.strip()}</p>" for p in pkg["cover_letter"].split("\n\n") if p.strip()])
         body_html = f"""
-        <html><body style="font-family:Arial,sans-serif;color:#333;max-width:680px;margin:0 auto;line-height:1.6">
-          <p>{cover_html}</p>
-          <hr style="border:1px solid #eee;margin:24px 0">
-          <p style="font-size:12px;color:#888">Submitted by AI Job Hunter on behalf of David Olagbenro.</p>
-        </body></html>
+        <html>
+        <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#222;font-size:15px;max-width:650px;margin:0 auto;padding:20px;">
+          {clean_cover_html}
+          <hr style="border:none;border-top:1px solid #e2e8f0;margin:30px 0 15px 0;">
+          <p style="font-size:12px;color:#94a3b8;margin:0;">Submitted on behalf of David Olagbenro — Senior IT & Communication Specialist.</p>
+        </body>
+        </html>
         """
 
         user_res = await db.execute(select(User).limit(1))
@@ -151,8 +152,8 @@ class AutoApplier:
                 gmail_result = await GmailService.send_application_email(
                     access_token=access_token,
                     sender_email=sender_email,
-                    to_email=recruiter_email,
-                    subject=f"Application: {job.title} — David Olagbenro | Senior ICT Specialist",
+                    to_email=target_email,
+                    subject=f"Application: {job.title} — David Olagbenro",
                     body_html=body_html,
                     cv_path=str(cv_path) if cv_path.exists() else None,
                     cv_filename=settings.cv_filename
@@ -168,8 +169,8 @@ class AutoApplier:
                         gmail_result = await GmailService.send_application_email(
                             access_token=new_token,
                             sender_email=sender_email,
-                            to_email=recruiter_email,
-                            subject=f"Application: {job.title} — David Olagbenro | Senior ICT Specialist",
+                            to_email=target_email,
+                            subject=f"Application: {job.title} — David Olagbenro",
                             body_html=body_html,
                             cv_path=str(cv_path) if cv_path.exists() else None,
                             cv_filename=settings.cv_filename
@@ -187,7 +188,8 @@ class AutoApplier:
                 "job_id": job.id,
                 "title": job.title,
                 "employer": job.employer,
-                "recruiter_email": recruiter_email,
+                "recruiter_email": target_email,
+                "is_hr_direct": bool(recruiter_email),
                 "gmail_status": gmail_result.get("status"),
                 "message_id": gmail_result.get("message_id")
             }
@@ -208,15 +210,16 @@ class AutoApplier:
                 },
                 match_score=match_score,
                 opportunity_score=opportunity_score,
-                recipient_email=recruiter_email,
+                recipient_email=target_email,
                 gmail_msg_id=gmail_result.get("message_id")
             )
 
-        logger.info(f"✅ AUTO-APPLIED: {job.title} at {job.employer} -> {recruiter_email}")
+        logger.info(f"✅ AUTO-APPLIED: {job.title} at {job.employer} -> {target_email}")
         return {
             "application_id": app_obj.id,
             "job_title": job.title,
             "employer": job.employer,
             "email_status": gmail_result.get("status"),
-            "recipient": recruiter_email
+            "recipient": target_email,
+            "is_hr_direct": bool(recruiter_email)
         }
