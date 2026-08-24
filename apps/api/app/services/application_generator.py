@@ -33,18 +33,19 @@ class ApplicationGenerator:
         # ── 1. Tailored Cover Letter ──
         cover_letter = f"""Dear Hiring Team at {employer},
 
-I am writing to express my strong interest in the **{job_title}** position located in {job_loc}. With extensive senior technical experience across enterprise infrastructure, cybersecurity, cloud architecture (Azure & Entra ID), full-stack Python/web engineering, and ICT operations, I am confident in delivering immediate value to your technology objectives.
+I am writing to express my strong interest in the **{job_title}** position at {employer}. With extensive senior technical experience across enterprise infrastructure, cybersecurity, cloud architecture (Azure & Entra ID), full-stack Python/web engineering, and ICT4D operations, I am confident in delivering immediate value to your technology objectives.
 
 In my recent work at RedAid Nigeria and Diverse Health Initiative, I spearheaded end-to-end ICT and security initiatives—including IDS/IPS deployment, Azure-integrated security API testing, Starlink satellite rollouts, and mission-critical web application development. My background in orchestrating multi-site network resilience, disaster recovery protocols, and full-stack software development directly aligns with the requirements of this role.
 
 Specifically, I bring verified expertise in:
 {chr(10).join([f"- **{skill.title()}**: Demonstrated across multi-year enterprise and NGO production deployments" for skill in matched_skills[:4]])}
 
-I welcome the opportunity to discuss how my technical leadership, systems architecture experience, and problem-solving mindset will support {employer}'s mission. Thank you for your time and consideration.
+I am available for remote, hybrid, or on-site roles globally and welcome relocation opportunities. I welcome the opportunity to discuss how my technical leadership, systems architecture experience, and problem-solving mindset will support {employer}'s mission. Thank you for your time and consideration.
 
 Sincerely,
 {candidate_name}
-IT & Communication Specialist / Systems Engineer
+Senior IT & Communication Specialist | ICT4D | Cybersecurity | Systems Engineer
+davidolagbenro35@gmail.com
 """
 
         # ── 2. Tailored CV Variant ──
@@ -53,7 +54,7 @@ IT & Communication Specialist / Systems Engineer
         certifications = profile.get("certifications", [])
 
         cv_markdown = f"""# {candidate_name}
-**{job_title} Candidate** | Location: Nigeria | Remote / Worldwide Ready
+**{job_title} Candidate** | Open to Worldwide Opportunities | Remote / Hybrid / On-Site
 
 ## Executive Profile
 {profile.get('summary', '')}

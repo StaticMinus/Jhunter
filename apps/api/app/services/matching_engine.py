@@ -35,7 +35,7 @@ class MatchingEngine:
                 "software developer", "cybersecurity analyst", "ict4d", "cto"
             ])
         ]
-        candidate_location = (profile_data.get("location") or "Nigeria").lower()
+        candidate_location = (profile_data.get("location") or "worldwide").lower()
         salary_floor = float(profile_data.get("salary_floor") or 500000.0)
 
         # ── 2. Extract Job Attributes ──
@@ -91,12 +91,14 @@ class MatchingEngine:
         # e) Education / Certifications Fit (10 pts)
         score_edu = 9.0
 
-        # f) Location / Work Mode Fit (10 pts)
+        # David is open to worldwide roles — remote, hybrid, and on-site globally
         score_loc = 6.0
-        if "remote" in job_work_mode or "remote" in job_location or "nigeria" in job_location or "worldwide" in job_location:
+        if "remote" in job_work_mode or "remote" in job_location or "worldwide" in job_location or "international" in job_location:
             score_loc = 10.0
         elif "hybrid" in job_work_mode:
             score_loc = 8.0
+        elif any(region in job_location for region in ["europe", "geneva", "amsterdam", "london", "nairobi", "accra", "kampala", "dakar", "africa"]):
+            score_loc = 9.0  # Strong international markets for David's profile
 
         # g) Communication / Transferable Skills (5 pts)
         score_comm = 5.0
@@ -118,12 +120,13 @@ class MatchingEngine:
             score_visa = 5.0
 
         # b) Work Mode / Location Preference (20 pts)
+        # David is open to worldwide roles
         if "remote" in job_work_mode:
             score_mode = 20.0
         elif "hybrid" in job_work_mode:
             score_mode = 16.0
-        elif "nigeria" in job_location:
-            score_mode = 15.0
+        elif any(region in job_location for region in ["europe", "usa", "uk", "canada", "australia", "africa", "worldwide", "international"]):
+            score_mode = 14.0
         else:
             score_mode = 10.0
 
