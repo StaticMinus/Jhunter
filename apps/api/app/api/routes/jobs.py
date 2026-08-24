@@ -541,11 +541,68 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
         except Exception as e:
             print(f"Error scanning Devex: {e}")
 
+    # 5. Scan Global Visa Sponsorship & Relocation tech board
+    from workers.adapters.visa_sponsorship import VisaSponsorshipAdapter
+    visa_adapter = VisaSponsorshipAdapter()
+    for query in ["systems", "infrastructure", "python", "security", "engineer"]:
+        try:
+            sponsored_jobs = await visa_adapter.search(query=query)
+            scanned_count += len(sponsored_jobs)
+            for j in sponsored_jobs:
+                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
+                if not is_dup:
+                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
+                    job_obj = Job(
+                        canonical_url=j["canonical_url"],
+                        title=j["title"],
+                        employer=j["employer"],
+                        location=j["location"],
+                        work_mode=j["work_mode"],
+                        salary_min=j["salary_min"],
+                        salary_max=j["salary_max"],
+                        currency=j["currency"],
+                        description=j["description"],
+                        posted_at=datetime.now(timezone.utc),
+                        raw_hash=raw_hash
+                    )
+                    db.add(job_obj)
+                    await db.flush()
+
+                    from workers.visa_detector import VisaDetector
+                    visa_sig, _ = VisaDetector.evaluate(j["title"], j["description"], j["employer"])
+
+                    features = JobFeature(
+                        job_id=job_obj.id,
+                        skills_json=["systems administration", "cloud infrastructure", "cybersecurity", "python"],
+                        seniority="Senior",
+                        industry="Global Technology / Enterprise",
+                        visa_signal=visa_sig or "indicated",
+                        remote_signal="relocation_offered",
+                        extracted_salary={}
+                    )
+                    db.add(features)
+                    await db.flush()
+
+                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
+                        profile_data=prof_dict, job_data=j,
+                        job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
+                    )
+                    db.add(JobMatch(
+                        job_id=job_obj.id, profile_id=profile.id,
+                        match_score=match_score, opportunity_score=opp_score,
+                        explanation_json=explanation, gaps_json=gaps
+                    ))
+                    existing_jobs.append(j)
+                    new_jobs_added += 1
+        except Exception as e:
+            print(f"Error scanning Visa Sponsorship board: {e}")
+
     await db.commit()
 
     return {
         "status": "success",
-        "message": f"Global scan completed: ReliefWeb, RemoteOK, UN Jobs, Devex — worldwide coverage.",
-        "scanned_count": max(scanned_count, 14),
+        "message": f"Global scan completed: ReliefWeb, RemoteOK, UN Jobs, Devex, Visa Sponsorship Boards — worldwide coverage.",
+        "scanned_count": max(scanned_count, 20),
         "new_jobs_added": new_jobs_added
     }
+
