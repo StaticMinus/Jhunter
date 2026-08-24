@@ -649,7 +649,112 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         print(f"Error scanning Global Fellowships: {e}")
 
+    # 7. Scan WeWorkRemotely for global tech/DevOps/Sysadmin roles
+    from workers.adapters.we_work_remotely import WeWorkRemotelyAdapter
+    wwr_adapter = WeWorkRemotelyAdapter()
+    try:
+        wwr_jobs = await wwr_adapter.search(query="devops")
+        scanned_count += len(wwr_jobs)
+        for j in wwr_jobs:
+            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
+            if not is_dup:
+                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
+                job_obj = Job(
+                    canonical_url=j["canonical_url"],
+                    title=j["title"],
+                    employer=j["employer"],
+                    location=j["location"],
+                    work_mode=j["work_mode"],
+                    salary_min=j["salary_min"],
+                    salary_max=j["salary_max"],
+                    currency=j["currency"],
+                    description=j["description"],
+                    posted_at=datetime.now(timezone.utc),
+                    raw_hash=raw_hash
+                )
+                db.add(job_obj)
+                await db.flush()
+
+                features = JobFeature(
+                    job_id=job_obj.id,
+                    skills_json=["systems administration", "cloud infrastructure", "cybersecurity & ids/ips", "python & api development"],
+                    seniority="Senior",
+                    industry="Technology / Cloud Infrastructure",
+                    visa_signal="indicated",
+                    remote_signal="full_remote",
+                    extracted_salary={}
+                )
+                db.add(features)
+                await db.flush()
+
+                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
+                    profile_data=prof_dict, job_data=j,
+                    job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
+                )
+                db.add(JobMatch(
+                    job_id=job_obj.id, profile_id=profile.id,
+                    match_score=match_score, opportunity_score=opp_score,
+                    explanation_json=explanation, gaps_json=gaps
+                ))
+                existing_jobs.append(j)
+                new_jobs_added += 1
+    except Exception as e:
+        print(f"Error scanning WeWorkRemotely: {e}")
+
+    # 8. Scan Remotive for global live remote engineering & sysadmin roles
+    from workers.adapters.remotive import RemotiveAdapter
+    remotive_adapter = RemotiveAdapter()
+    try:
+        rem_jobs = await remotive_adapter.search(query="devops")
+        scanned_count += len(rem_jobs)
+        for j in rem_jobs:
+            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
+            if not is_dup:
+                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
+                job_obj = Job(
+                    canonical_url=j["canonical_url"],
+                    title=j["title"],
+                    employer=j["employer"],
+                    location=j["location"],
+                    work_mode=j["work_mode"],
+                    salary_min=j["salary_min"],
+                    salary_max=j["salary_max"],
+                    currency=j["currency"],
+                    description=j["description"],
+                    posted_at=datetime.now(timezone.utc),
+                    raw_hash=raw_hash
+                )
+                db.add(job_obj)
+                await db.flush()
+
+                features = JobFeature(
+                    job_id=job_obj.id,
+                    skills_json=["systems administration", "azure & cloud", "linux server administration", "cybersecurity"],
+                    seniority="Senior",
+                    industry="Technology / Cloud / Systems",
+                    visa_signal="possible",
+                    remote_signal="full_remote",
+                    extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
+                )
+                db.add(features)
+                await db.flush()
+
+                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
+                    profile_data=prof_dict, job_data=j,
+                    job_features={"skills_json": features.skills_json, "visa_signal": "possible"}
+                )
+                db.add(JobMatch(
+                    job_id=job_obj.id, profile_id=profile.id,
+                    match_score=match_score, opportunity_score=opp_score,
+                    explanation_json=explanation, gaps_json=gaps
+                ))
+                existing_jobs.append(j)
+                new_jobs_added += 1
+    except Exception as e:
+        print(f"Error scanning Remotive: {e}")
+
     await db.commit()
+
 
 
     # ── Auto-Apply to all high-fit jobs discovered during scan ──
