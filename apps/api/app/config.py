@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # ─── CORS ───
     cors_origins: list[str] = ["http://localhost:3000"]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {"env_file": (".env", "apps/api/.env"), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

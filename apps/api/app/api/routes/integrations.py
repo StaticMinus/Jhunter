@@ -62,13 +62,41 @@ async def get_telegram_status():
     )
 
 
+from app.services.telegram_service import TelegramService
+
 @router.post("/telegram/test")
 async def test_telegram_alert(db: AsyncSession = Depends(get_db)):
     """Dispatches a test high-value job alert card to Telegram."""
     db.add(AuditLog(action="TEST_TELEGRAM_NOTIFICATION", entity_type="notification"))
     await db.commit()
+
+    sample_job = {
+        "title": "ICT Specialist & Systems Administrator",
+        "employer": "International Humanitarian Health Org",
+        "location": "Abuja, Nigeria",
+        "work_mode": "hybrid",
+        "canonical_url": "https://reliefweb.int/job/ict-specialist-abuja"
+    }
+
+    sent = False
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        sent = await TelegramService.send_job_alert(
+            bot_token=settings.telegram_bot_token,
+            chat_id=settings.telegram_chat_id,
+            job_data=sample_job,
+            match_score=94,
+            opportunity_score=97,
+            reasons=[
+                "Humanitarian ICT & telecommunications experience directly aligned",
+                "Strong match: Active Directory, Starlink, IDS/IPS, and disaster recovery",
+                "Visa/relocation support officially indicated"
+            ]
+        )
+
     return {
-        "status": "sent",
+        "status": "sent" if sent else "simulated",
+        "connected": bool(settings.telegram_bot_token and settings.telegram_chat_id),
+        "bot_name": "@Junterxbot",
         "message": "⚡ High-Value Match Alert: ICT Specialist & Systems Administrator (Match: 94% | Opportunity: 97%) dispatched to Telegram bot."
     }
 
