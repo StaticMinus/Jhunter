@@ -11,11 +11,13 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
+engine_kwargs = {"echo": settings.debug}
+if "sqlite" not in settings.database_url:
+    engine_kwargs.update({"pool_size": 5, "max_overflow": 10})
+
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.debug,
-    pool_size=5,
-    max_overflow=10,
+    **engine_kwargs
 )
 
 session_factory = async_sessionmaker(

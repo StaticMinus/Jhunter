@@ -17,8 +17,8 @@ class Settings(BaseSettings):
 
     # ─── Database ───
     database_url: str = Field(
-        default="postgresql+asyncpg://jhunter:jhunter@localhost:5432/jhunter",
-        description="Async PostgreSQL connection string",
+        default="sqlite+aiosqlite:///./jhunter.db",
+        description="Async database connection string (SQLite for dev, Postgres for prod)",
     )
 
     # ─── Auth / JWT ───
