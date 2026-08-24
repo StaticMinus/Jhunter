@@ -20,7 +20,8 @@ class ReliefWebAdapter(JobSourceAdapter):
         params = {
             "appname": "jhunter-recruitment-intelligence",
             "query[value]": f"{query} {location or ''}".strip(),
-            "limit": 10,
+            "sort[]": "date.created:desc",
+            "limit": 15,
             "profile": "full"
         }
         try:
@@ -52,9 +53,12 @@ class ReliefWebAdapter(JobSourceAdapter):
         country = fields.get("country", [{}])
         location = country[0].get("name", "Worldwide / International") if country else "Worldwide"
 
+        date_created = fields.get("date", {}).get("created") or datetime.now(timezone.utc).isoformat()
+        canonical_url = fields.get("url") or f"https://reliefweb.int/job/{raw.get('id', '')}"
+
         return {
             "external_id": str(raw.get("id", "")),
-            "canonical_url": fields.get("url", f"https://reliefweb.int/job/{raw.get('id', '')}"),
+            "canonical_url": canonical_url,
             "title": fields.get("title", "ICT Specialist"),
             "employer": employer,
             "location": location,
@@ -63,7 +67,7 @@ class ReliefWebAdapter(JobSourceAdapter):
             "salary_max": None,
             "currency": "USD",
             "description": fields.get("body", "Humanitarian IT and telecommunications role."),
-            "posted_at": datetime.now(timezone.utc).isoformat()
+            "posted_at": date_created
         }
 
     async def health_check(self) -> bool:
