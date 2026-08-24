@@ -12,8 +12,9 @@ from app.api.routes.jobs import trigger_job_scan
 
 logger = logging.getLogger(__name__)
 
-# Frequency in seconds (e.g., 3600 = 1 hour)
-SCAN_INTERVAL_SECONDS = 3600
+# Frequency in seconds (300 = 5 minutes for active regular sweeps)
+SCAN_INTERVAL_SECONDS = 300
+
 
 
 async def autonomous_job_hunter_worker():

@@ -75,13 +75,28 @@ class MatchingEngine:
         score_exp = 19.0
 
         # c) Role / Seniority Fit (15 pts)
-        score_role = 5.0
-        for target in candidate_roles:
-            if target in job_title or any(word in job_title for word in target.split() if len(word) > 3):
-                score_role = 15.0
-                break
-        if score_role < 15.0 and any(kw in job_title for kw in ["it", "ict", "software", "network", "system", "security", "developer", "lead"]):
-            score_role = 13.0
+        is_tech_role = any(kw in job_title for kw in [
+            "it", "ict", "software", "network", "system", "security", "developer", "cloud",
+            "engineer", "infrastructure", "devops", "cyber", "technology", "data", "admin",
+            "telecom", "architect", "support", "technical", "ict4d", "digital"
+        ])
+        is_unrelated_role = any(kw in job_title for kw in [
+            "finance", "grants", "accountant", "nurse", "medical", "child survival",
+            "procurement", "supply chain", "legal counsel", "hr generalist", "driver"
+        ]) and not is_tech_role
+
+        if is_unrelated_role:
+            score_role = 0.0
+            score_skills = 0.0
+        else:
+            score_role = 5.0
+            for target in candidate_roles:
+                if target in job_title or any(word in job_title for word in target.split() if len(word) > 3):
+                    score_role = 15.0
+                    break
+            if score_role < 15.0 and is_tech_role:
+                score_role = 13.0
+
 
         # d) Industry / Domain Fit (10 pts)
         score_industry = 9.0
