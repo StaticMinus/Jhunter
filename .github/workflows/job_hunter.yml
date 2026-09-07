@@ -1,0 +1,76 @@
+name: AI Job Hunter — Autonomous Sweep & Auto-Apply
+
+on:
+  schedule:
+    # Run every 2 hours automatically
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+    # Allow manual execution anytime from GitHub Actions tab
+    inputs:
+      candidate_email:
+        description: 'Candidate email to hunt for (use "all" for all candidates)'
+        required: false
+        default: 'all'
+
+concurrency:
+  group: job-hunter-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep-and-apply:
+    name: Global Job Sweep & Real-Time Auto-Apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/api/requirements.txt
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/api/requirements.txt
+
+      - name: Run Global Discovery & Auto-Apply Sweep
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///jhunter.db"
+          SECRET_KEY: ${{ secrets.SECRET_KEY || 'jhunter_github_actions_secret_key_8f3a9b1c2d3e4f5a' }}
+          DEBUG: "False"
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID || '854380887532-mltu9b55aqoic5v7okrjanmf95qmm618.apps.googleusercontent.com' }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET || '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' }}
+          GOOGLE_REDIRECT_URI: "http://localhost:8000/api/auth/google/callback"
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN || '1//03OBWKL091JhWCgYIARAAGAMSNwF-L9Irfj3ItLo7VJdNfSPJGxYIHTbIybnHpdEQ6c6d1NYHRHNhxvSyFQ-HeRv9QCscMUXJ7dU' }}
+          DEFAULT_CANDIDATE_EMAIL: ${{ github.event.inputs.candidate_email || 'all' }}
+          CV_PDF_PATH: "apps/api/cv_david_ict_specialist.pdf"
+          CV_FILENAME: "Cv_David_ICT_Specialist.pdf"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8656762205:AAG7PUxujwk8elkTtN3UH37Awpgk9nEbOH4' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '8428715579' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SCAN_INTERVAL_SECONDS: "300"
+          HEARTBEAT_INTERVAL_HOURS: "6"
+        run: |
+          python workers/autonomous_daemon.py --once
+
+      - name: Persist SQLite Database & History
+        if: always()
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add jhunter.db* apps/api/cv_uploads/
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(db): update job matches & application logs [skip ci]"
+            git push
+          else
+            echo "No database changes to commit."
+          fi
