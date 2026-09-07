@@ -1,0 +1,1 @@
+# Workers adapters module

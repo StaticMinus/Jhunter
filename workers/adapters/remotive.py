@@ -16,48 +16,55 @@ class RemotiveAdapter(JobSourceAdapter):
             base_url="https://remotive.com/api/remote-jobs"
         )
 
-    async def search(self, query: str, location: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str = "", location: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        params = {
-            "category": "devops-sysadmin",
-            "limit": 20
-        }
+        categories = filters.get("categories", ["devops-sysadmin", "software-dev", "security"]) if filters else ["devops-sysadmin", "software-dev", "security"]
         jobs = []
-        try:
-            async with httpx.AsyncClient(timeout=10.0, headers=headers, follow_redirects=True) as client:
-                res = await client.get(self.base_url, params=params)
-                if res.status_code == 200:
-                    data = res.json()
-                    items = data.get("jobs", [])
-                    for item in items:
-                        salary_str = item.get("salary", "")
-                        salary_val = None
-                        if "$" in salary_str:
-                            import re
-                            nums = re.findall(r'\d+', salary_str.replace(",", ""))
-                            if nums:
-                                salary_val = float(nums[0])
 
-                        raw = {
-                            "external_id": f"remotive_{item.get('id')}",
-                            "canonical_url": item.get("url", "https://remotive.com"),
-                            "title": item.get("title", "DevOps / Systems Engineer"),
-                            "employer": item.get("company_name", "Global Enterprise"),
-                            "location": item.get("candidate_required_location", "Worldwide / Remote"),
-                            "work_mode": "remote",
-                            "salary_min": salary_val,
-                            "salary_max": salary_val * 1.3 if salary_val else None,
-                            "currency": "USD",
-                            "description": item.get("description", ""),
-                            "posted_at": item.get("publication_date") or datetime.now(timezone.utc).isoformat()
-                        }
-                        jobs.append(self.normalize(raw))
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+                for cat in categories:
+                    try:
+                        res = await client.get(self.base_url, params={"category": cat, "limit": 30})
+                        if res.status_code == 200:
+                            data = res.json()
+                            items = data.get("jobs", [])
+                            for item in items:
+                                salary_str = item.get("salary", "")
+                                salary_val = None
+                                if "$" in salary_str:
+                                    import re
+                                    nums = re.findall(r'\d+', salary_str.replace(",", ""))
+                                    if nums:
+                                        salary_val = float(nums[0])
+
+                                raw = {
+                                    "external_id": f"remotive_{item.get('id')}",
+                                    "canonical_url": item.get("url", "https://remotive.com"),
+                                    "title": item.get("title", "DevOps / Systems Engineer"),
+                                    "employer": item.get("company_name", "Global Enterprise"),
+                                    "location": item.get("candidate_required_location", "Worldwide / Remote"),
+                                    "work_mode": "remote",
+                                    "salary_min": salary_val,
+                                    "salary_max": salary_val * 1.3 if salary_val else None,
+                                    "currency": "USD",
+                                    "description": item.get("description", ""),
+                                    "posted_at": item.get("publication_date") or datetime.now(timezone.utc).isoformat()
+                                }
+                                jobs.append(self.normalize(raw))
+                                if len(jobs) >= 50:
+                                    break
+                        if len(jobs) >= 50:
+                            break
+                    except Exception as ce:
+                        print(f"Remotive category {cat} error: {ce}")
         except Exception as e:
             print(f"Remotive Adapter Error: {e}")
 
         return jobs
+
 
     def normalize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         return {

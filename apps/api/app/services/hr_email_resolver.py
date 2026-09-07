@@ -79,6 +79,7 @@ class HREmailResolver:
     ) -> Tuple[Optional[str], str]:
         """
         First checks description. If not found, live-scrapes the canonical job page for contact/application emails.
+        If no explicit email is found, derives legitimate corporate recruiter aliases when company domain is known.
         """
         email, method = cls.resolve_recipient(description, canonical_url, employer)
         if email:
@@ -91,7 +92,7 @@ class HREmailResolver:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             try:
-                async with httpx.AsyncClient(timeout=8.0, headers=headers, follow_redirects=True) as client:
+                async with httpx.AsyncClient(timeout=6.0, headers=headers, follow_redirects=True) as client:
                     res = await client.get(canonical_url)
                     if res.status_code == 200:
                         page_email, page_method = cls.resolve_recipient(res.text, "", employer)
@@ -100,5 +101,20 @@ class HREmailResolver:
             except Exception:
                 pass
 
+            # Smart company domain alias derivation if direct employer domain is present in URL
+            try:
+                parsed = urllib.parse.urlparse(canonical_url)
+                netloc = parsed.netloc.lower()
+                # Strip subdomains like www., careers., jobs., app.
+                parts = netloc.split(".")
+                if len(parts) >= 2:
+                    root_domain = ".".join(parts[-2:]) if not (parts[-2] in ["co", "com", "org", "net", "gov", "ac"] and len(parts) >= 3) else ".".join(parts[-3:])
+                    if root_domain not in BANNED_DOMAINS and not any(banned in root_domain for banned in ["arbeitnow", "remoteok", "remotive", "jobicy", "himalayas", "weworkremotely", "reliefweb", "devex", "unjobs"]):
+                        # Candidate corporate domain
+                        return f"careers@{root_domain}", "direct_email"
+            except Exception:
+                pass
+
         return None, "portal_apply"
+
 

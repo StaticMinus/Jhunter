@@ -20,45 +20,53 @@ class VisaSponsorshipAdapter(JobSourceAdapter):
 
     async def search(self, query: str = "", location: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
-        Fetches technology and systems jobs with Visa Sponsorship and Relocation support.
+        Fetches technology and systems jobs with Visa Sponsorship and Relocation support across multiple pages.
         """
         headers = {
-            "User-Agent": "Jhunter-Recruitment-Intelligence/1.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
+        matches = []
+        q_lower = query.lower() if query else ""
+        pages = filters.get("pages", [1, 2, 3]) if filters else [1, 2, 3]
+
         try:
-            async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
-                res = await client.get(self.base_url)
-                if res.status_code == 200:
-                    data = res.json().get("data", [])
-                    matches = []
-                    q_lower = query.lower() if query else ""
-
-                    for item in data:
-                        title = item.get("title", "")
-                        desc = item.get("description", "")
-                        company = item.get("company_name", "")
-                        is_visa_tagged = item.get("visa_sponsorship") is True
-
-                        # Detect visa status
-                        visa_signal, _ = VisaDetector.evaluate(title, desc, company)
-                        if is_visa_tagged:
-                            visa_signal = "indicated"
-
-                        # Filter by query if provided
-                        combined = f"{title} {desc} {company}".lower()
-                        if q_lower and q_lower not in combined:
+            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+                for page in pages:
+                    try:
+                        url = f"{self.base_url}?page={page}"
+                        res = await client.get(url)
+                        if res.status_code != 200:
                             continue
+                        data = res.json().get("data", [])
+                        for item in data:
+                            title = item.get("title", "")
+                            desc = item.get("description", "")
+                            company = item.get("company_name", "")
+                            is_visa_tagged = item.get("visa_sponsorship") is True
 
-                        # Prioritize visa-sponsored or relocation roles
-                        if is_visa_tagged or visa_signal in ("indicated", "possible"):
-                            matches.append(self.normalize(item))
-                            if len(matches) >= 15:
-                                break
+                            visa_signal, _ = VisaDetector.evaluate(title, desc, company)
+                            if is_visa_tagged:
+                                visa_signal = "indicated"
 
-                    return matches
-        except Exception:
-            pass
-        return []
+                            combined = f"{title} {desc} {company}".lower()
+                            if q_lower and q_lower not in combined:
+                                # Keep high-value tech/infrastructure roles
+                                if not any(kw in combined for kw in ["devops", "sysadmin", "systems", "cloud", "security", "python", "engineer", "network", "architect", "support", "it"]):
+                                    continue
+
+                            if is_visa_tagged or visa_signal in ("indicated", "possible") or any(kw in combined for kw in ["visa", "relocation", "sponsor", "remote"]):
+                                matches.append(self.normalize(item))
+                                if len(matches) >= 60:
+                                    break
+                        if len(matches) >= 60:
+                            break
+                    except Exception as pe:
+                        print(f"Visa adapter page {page} error: {pe}")
+        except Exception as e:
+            print(f"VisaSponsorship Adapter Error: {e}")
+
+        return matches
+
 
     def normalize(self, raw_job: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize raw payload into standard Jhunter Job schema."""

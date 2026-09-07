@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
@@ -44,9 +44,10 @@ async def get_db():
 @router.get("", response_model=List[ApplicationResponse])
 async def list_applications(
     status: Optional[str] = None,
+    profile_id: Optional[str] = Query(None, description="Optional profile ID to filter applications"),
     db: AsyncSession = Depends(get_db)
 ):
-    profile = await get_or_create_default_profile(db)
+    profile = await get_or_create_default_profile(db, profile_id)
     
     stmt = select(Application).where(Application.profile_id == profile.id).order_by(desc(Application.created_at))
     if status:
@@ -83,10 +84,11 @@ async def list_applications(
 @router.post("/{job_id}/prepare", response_model=ApplicationResponse)
 async def prepare_application_package(
     job_id: str,
+    profile_id: Optional[str] = Query(None),
     payload: Optional[ApplicationPrepareRequest] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    profile = await get_or_create_default_profile(db)
+    profile = await get_or_create_default_profile(db, profile_id)
     
     job_res = await db.execute(select(Job).where(Job.id == job_id))
     job = job_res.scalar_one_or_none()
@@ -112,6 +114,10 @@ async def prepare_application_package(
         db.add(app_obj)
         await db.flush()
 
+    # Load candidate user record
+    user_res = await db.execute(select(User).where(User.id == profile.user_id))
+    user = user_res.scalar_one_or_none()
+
     # Build Candidate Dictionary
     skills_res = await db.execute(select(CandidateSkill).where(CandidateSkill.profile_id == profile.id))
     skills = skills_res.scalars().all()
@@ -121,7 +127,10 @@ async def prepare_application_package(
     certifications = cert_res.scalars().all()
 
     prof_dict = {
-        "name": "David",
+        "name": user.name if user else "Candidate",
+        "email": user.email if user else "",
+        "seniority": profile.seniority or "Specialist",
+        "location": profile.location or "Nigeria",
         "summary": profile.summary,
         "skills": [{"skill": s.skill} for s in skills],
         "experiences": [{"employer": e.employer, "title": e.title, "start_date": e.start_date, "end_date": e.end_date, "description": e.description, "sector": e.sector} for e in experiences],

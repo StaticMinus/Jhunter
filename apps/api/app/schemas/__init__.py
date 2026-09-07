@@ -51,6 +51,8 @@ class CandidateProfileBase(BaseModel):
     location: Optional[str] = "Nigeria"
     salary_floor: Optional[float] = 500000.0
     preferences_json: Dict[str, Any] = Field(default_factory=dict)
+    cv_storage_path: Optional[str] = None
+    cv_filename: Optional[str] = None
 
 class CandidateProfileUpdate(CandidateProfileBase):
     skills: Optional[List[SkillItem]] = None
@@ -70,6 +72,20 @@ class CandidateProfileResponse(CandidateProfileBase):
     education: List[EducationItem] = []
     certifications: List[CertificationItem] = []
 
+class CandidateSummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    user_id: str
+    name: str
+    email: str
+    seniority: Optional[str] = None
+    location: Optional[str] = None
+    pool_type: Optional[str] = "IT / Systems / Cloud"
+    target_roles: List[str] = []
+    top_skills: List[str] = []
+    match_count: int = 0
+    application_count: int = 0
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -77,7 +93,30 @@ class UserResponse(BaseModel):
     name: str
     timezone: str
     created_at: datetime
+    telegram_chat_id: Optional[str] = None
     profile: Optional[CandidateProfileResponse] = None
+
+
+class CreateCandidateRequest(BaseModel):
+    """Request to create a new candidate user + profile."""
+    name: str = Field(..., description="Full name of the candidate")
+    email: str = Field(..., description="Email address of the candidate")
+    timezone: str = Field(default="Africa/Lagos", description="Timezone")
+    telegram_chat_id: Optional[str] = Field(default=None, description="Per-user Telegram chat ID for notifications")
+    summary: Optional[str] = Field(default=None, description="Professional summary")
+    seniority: Optional[str] = Field(default="Mid-Level", description="Seniority level")
+    location: Optional[str] = Field(default="Nigeria", description="Location")
+    salary_floor: Optional[float] = Field(default=400000.0, description="Minimum salary expectation")
+    preferences_json: Dict[str, Any] = Field(default_factory=lambda: {
+        "target_roles": [],
+        "work_modes": ["remote", "hybrid", "onsite"],
+        "min_match_threshold": 75,
+        "auto_apply_enabled": False
+    })
+    skills: List[SkillItem] = Field(default_factory=list)
+    experiences: List[ExperienceItem] = Field(default_factory=list)
+    education: List[EducationItem] = Field(default_factory=list)
+    certifications: List[CertificationItem] = Field(default_factory=list)
 
 
 # ─── Job Schemas ───

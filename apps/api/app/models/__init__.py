@@ -27,6 +27,7 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     google_tokens_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     profile: Mapped[Optional["CandidateProfile"]] = relationship("CandidateProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -43,6 +44,8 @@ class CandidateProfile(Base):
     location: Mapped[Optional[str]] = mapped_column(String(128), default="Nigeria")
     salary_floor: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
     preferences_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    cv_storage_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cv_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

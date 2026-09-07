@@ -2,7 +2,7 @@ import os
 import sys
 
 # Ensure workspace root is in sys.path for worker adapter discovery
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
@@ -18,6 +18,7 @@ from app.api.routes import auth, candidate, jobs, applications, integrations, no
 
 import asyncio
 from app.services.scheduler import autonomous_job_hunter_worker
+from app.services.health_monitor import HealthMonitor
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,12 +33,18 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Graceful shutdown
+    # Graceful shutdown — notify Telegram
     bg_task.cancel()
     try:
         await bg_task
     except asyncio.CancelledError:
         pass
+
+    try:
+        await HealthMonitor.send_shutdown_alert("API server shutting down")
+    except Exception:
+        pass
+
     await close_db()
 
 
@@ -45,8 +52,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Job Hunter API",
-        version="0.1.0",
-        description="Autonomous Executive Recruitment Intelligence & Application Assistant API",
+        version="0.2.0",
+        description="Autonomous Executive Recruitment Intelligence & Application Assistant API — 24/7 Hardened",
         lifespan=lifespan
     )
 
@@ -73,7 +80,12 @@ def create_app() -> FastAPI:
             "status": "healthy",
             "service": "AI Job Hunter Backend",
             "version": settings.app_version,
-            "engine": "FastAPI + SQLAlchemy Async"
+            "engine": "FastAPI + SQLAlchemy Async",
+            "daemon": "24/7 autonomous scanner active",
+            "uptime": HealthMonitor.get_uptime_str(),
+            "total_scans": HealthMonitor._total_scans,
+            "total_applied": HealthMonitor._total_applied,
+            "scan_interval": f"{settings.scan_interval_seconds}s"
         }
 
     return app

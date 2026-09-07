@@ -1,18 +1,14 @@
-"""
-AI Job Hunter — Gmail & Telegram Integration Routes
-"""
-
 import json
 import logging
-from fastapi import APIRouter, Depends, Request
+from typing import Optional
+from fastapi import APIRouter, Depends, Request, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.session import session_factory
-from app.models import Notification, AuditLog, User
+from app.models import Notification, AuditLog, User, CandidateProfile, Job, JobMatch, Application
 from app.schemas import GmailStatusResponse, TelegramStatusResponse, KPISummaryResponse
-from app.models import Job, JobMatch, Application
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -29,12 +25,29 @@ async def get_db():
 
 
 @router.get("/gmail/status", response_model=GmailStatusResponse)
-async def get_gmail_status(db: AsyncSession = Depends(get_db)):
-    """Returns real Gmail connection status from the database."""
-    user_res = await db.execute(select(User).limit(1))
-    user = user_res.scalar_one_or_none()
+async def get_gmail_status(
+    profile_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    """Returns real Gmail connection status for the active candidate user."""
+    if profile_id:
+        p_res = await db.execute(select(CandidateProfile).where(CandidateProfile.id == profile_id))
+        p = p_res.scalar_one_or_none()
+        if p:
+            u_res = await db.execute(select(User).where(User.id == p.user_id))
+            user = u_res.scalar_one_or_none()
+        else:
+            user = None
+    else:
+        target_email = getattr(settings, "default_candidate_email", "davidolagbenro35@gmail.com")
+        user_res = await db.execute(select(User).where(User.email == target_email).limit(1))
+        user = user_res.scalar_one_or_none()
+        if not user:
+            user_res = await db.execute(select(User).limit(1))
+            user = user_res.scalar_one_or_none()
+
     connected = bool(user and user.google_tokens_encrypted)
-    real_email = user.email if (user and connected) else ""
+    real_email = user.email if (user and connected) else (user.email if user else "")
     return GmailStatusResponse(
         connected=connected,
         email=real_email,
@@ -64,10 +77,11 @@ async def connect_gmail(db: AsyncSession = Depends(get_db)):
 
 @router.get("/telegram/status", response_model=TelegramStatusResponse)
 async def get_telegram_status():
+    is_connected = bool(settings.telegram_bot_token and settings.telegram_chat_id)
     return TelegramStatusResponse(
-        connected=True,
-        bot_username="@JobHunterAI_Bot",
-        chat_linked=True
+        connected=is_connected,
+        bot_username="@Junterxbot",
+        chat_linked=is_connected
     )
 
 
@@ -124,10 +138,18 @@ async def test_telegram_alert(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/kpis", response_model=KPISummaryResponse)
-async def get_kpi_summary(db: AsyncSession = Depends(get_db)):
+async def get_kpi_summary(
+    profile_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
     jobs_cnt = (await db.execute(select(Job))).scalars().all()
-    matches = (await db.execute(select(JobMatch))).scalars().all()
-    apps = (await db.execute(select(Application))).scalars().all()
+    
+    if profile_id:
+        matches = (await db.execute(select(JobMatch).where(JobMatch.profile_id == profile_id))).scalars().all()
+        apps = (await db.execute(select(Application).where(Application.profile_id == profile_id))).scalars().all()
+    else:
+        matches = (await db.execute(select(JobMatch))).scalars().all()
+        apps = (await db.execute(select(Application))).scalars().all()
 
     strong = len([m for m in matches if m.match_score >= 85])
     opp = len([m for m in matches if m.opportunity_score >= 85])

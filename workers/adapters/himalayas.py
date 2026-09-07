@@ -18,36 +18,46 @@ class HimalayasAdapter(JobSourceAdapter):
 
     async def search(self, query: str = "", location: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        params = {"limit": 20}
+        offsets = filters.get("offsets", [0, 50]) if filters else [0, 50]
         jobs = []
 
         try:
-            async with httpx.AsyncClient(timeout=10.0, headers=headers, follow_redirects=True) as client:
-                res = await client.get(self.base_url, params=params)
-                if res.status_code == 200:
-                    data = res.json()
-                    items = data.get("jobs", [])
-                    for item in items:
-                        sal_min = item.get("minSalary")
-                        sal_max = item.get("maxSalary")
-                        raw = {
-                            "external_id": f"himalayas_{item.get('id')}",
-                            "canonical_url": item.get("applicationUrl") or f"https://himalayas.app/jobs/{item.get('slug', '')}",
-                            "title": item.get("title", "Infrastructure / Cloud Specialist"),
-                            "employer": item.get("companyName", "Global Tech Co"),
-                            "location": "Worldwide / Remote",
-                            "work_mode": "remote",
-                            "salary_min": float(sal_min) if sal_min else None,
-                            "salary_max": float(sal_max) if sal_max else None,
-                            "currency": item.get("currency", "USD"),
-                            "description": item.get("description", ""),
-                            "posted_at": item.get("pubDate") or datetime.now(timezone.utc).isoformat()
-                        }
-                        jobs.append(self.normalize(raw))
+            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+                for offset in offsets:
+                    try:
+                        params = {"limit": 50, "offset": offset}
+                        res = await client.get(self.base_url, params=params)
+                        if res.status_code == 200:
+                            data = res.json()
+                            items = data.get("jobs", [])
+                            for item in items:
+                                sal_min = item.get("minSalary")
+                                sal_max = item.get("maxSalary")
+                                raw = {
+                                    "external_id": f"himalayas_{item.get('id')}",
+                                    "canonical_url": item.get("applicationUrl") or f"https://himalayas.app/jobs/{item.get('slug', '')}",
+                                    "title": item.get("title", "Infrastructure / Cloud Specialist"),
+                                    "employer": item.get("companyName", "Global Tech Co"),
+                                    "location": "Worldwide / Remote",
+                                    "work_mode": "remote",
+                                    "salary_min": float(sal_min) if sal_min else None,
+                                    "salary_max": float(sal_max) if sal_max else None,
+                                    "currency": item.get("currency", "USD"),
+                                    "description": item.get("description", ""),
+                                    "posted_at": item.get("pubDate") or datetime.now(timezone.utc).isoformat()
+                                }
+                                jobs.append(self.normalize(raw))
+                                if len(jobs) >= 60:
+                                    break
+                        if len(jobs) >= 60:
+                            break
+                    except Exception as he:
+                        print(f"Himalayas offset {offset} error: {he}")
         except Exception as e:
             print(f"Himalayas Adapter Error: {e}")
 
         return jobs
+
 
     def normalize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         return {

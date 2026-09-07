@@ -160,6 +160,7 @@ async def seed_jobs_if_empty(db: AsyncSession, profile: CandidateProfile):
 @router.get("", response_model=List[JobDetailResponse])
 async def list_jobs(
     query: Optional[str] = None,
+    profile_id: Optional[str] = Query(None, description="Optional profile ID to score jobs against"),
     min_match: Optional[int] = Query(None, ge=0, le=100),
     min_opportunity: Optional[int] = Query(None, ge=0, le=100),
     work_mode: Optional[str] = None,
@@ -167,7 +168,7 @@ async def list_jobs(
     limit: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
-    profile = await get_or_create_default_profile(db)
+    profile = await get_or_create_default_profile(db, profile_id)
     await seed_jobs_if_empty(db, profile)
 
     stmt = select(Job).order_by(desc(Job.created_at)).limit(limit)
@@ -229,8 +230,12 @@ async def list_jobs(
 
 
 @router.get("/{job_id}", response_model=JobDetailResponse)
-async def get_job_detail(job_id: str, db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def get_job_detail(
+    job_id: str,
+    profile_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    profile = await get_or_create_default_profile(db, profile_id)
     stmt = select(Job).where(Job.id == job_id)
     res = await db.execute(stmt)
     j = res.scalar_one_or_none()
@@ -276,25 +281,94 @@ async def get_job_detail(job_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
+# ── Rotating scan state for fresh discovery ──
+_scan_cycle_counter = 0
+
+# ── Rotating scan state for fresh discovery ──
+_scan_cycle_counter = 0
+
+# Rotating query groups — cycle through different search terms each scan (IT, Cloud, AI, Security, MEAL, M&E & Data)
+_RELIEF_WEB_QUERIES = [
+    ["ICT", "Systems Administrator", "Cybersecurity", "Cloud"],
+    ["MEAL", "Monitoring and Evaluation", "M&E Officer", "Data Analyst"],
+    ["AI Developer", "Software Engineer", "Python", "Cloud Engineer"],
+    ["MEAL Specialist", "Information Management", "DHIS2", "Data Management"],
+    ["Technology", "Digital", "Network Engineer", "Infrastructure"],
+    ["Penetration Tester", "Security Engineer", "DevOps", "Solutions Architect"],
+    ["Global Fellow", "Leadership Fellow", "Tech Residency", "CTO"],
+    ["IT Specialist", "SysAdmin", "Azure", "Information Security"],
+]
+
+_UN_JOBS_QUERIES = [
+    ["ICT", "Systems Engineer", "Cloud", "Digital"],
+    ["Monitoring and Evaluation", "MEAL", "Data Specialist", "M&E"],
+    ["AI Developer", "Software Engineer", "Python", "DevOps"],
+    ["Information Management Officer", "Data Analyst", "DHIS2"],
+    ["Cybersecurity", "Penetration Tester", "Security", "Network"],
+    ["Global Fellow", "Leadership", "Technology", "CTO"],
+    ["Infrastructure", "Cloud Architect", "Linux", "Sysadmin"],
+    ["IT Specialist", "Information Security", "Communications", "Solutions Architect"],
+]
+
+_VISA_PAGE_ROTATIONS = [
+    [1, 2, 3, 4],
+    [3, 4, 5, 6],
+    [5, 6, 7, 8],
+    [1, 3, 5, 7],
+]
+
+_HIMALAYAS_OFFSET_ROTATIONS = [
+    [0, 50],
+    [50, 100],
+    [100, 150],
+    [0, 100],
+]
+
+
 @router.post("/scan")
 async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
-    """Triggers an on-demand global scan across live source adapters (ReliefWeb, RemoteOK, LinkedIn, UN Jobs, Devex)."""
-    profile = await get_or_create_default_profile(db)
-    await seed_jobs_if_empty(db, profile)
+    """Triggers a high-throughput global scan across live source adapters with rotating pagination."""
+    global _scan_cycle_counter
+    _scan_cycle_counter += 1
+    cycle = _scan_cycle_counter
+
+    import logging
+    scan_logger = logging.getLogger("job_scanner")
+
+    primary_profile = await get_or_create_default_profile(db)
+    await seed_jobs_if_empty(db, primary_profile)
+
+    # Fetch all candidate profiles in the system
+    all_profiles_res = await db.execute(select(CandidateProfile))
+    all_profiles = all_profiles_res.scalars().all()
 
     from workers.adapters.reliefweb import ReliefWebAdapter
     from workers.adapters.remote_ok import RemoteOKAdapter
+    from workers.adapters.un_jobs import UNJobsAdapter
+    from workers.adapters.visa_sponsorship import VisaSponsorshipAdapter
+    from workers.adapters.global_fellowships import GlobalFellowshipAdapter
+    from workers.adapters.we_work_remotely import WeWorkRemotelyAdapter
+    from workers.adapters.remotive import RemotiveAdapter
+    from workers.adapters.jobicy import JobicyAdapter
+    from workers.adapters.himalayas import HimalayasAdapter
     from workers.deduplication import Deduplicator
+    from workers.visa_detector import VisaDetector
+    from app.services.auto_applier import AutoApplier
 
-    # Build Candidate Profile Dict for real-time scoring
-    skills_res = await db.execute(select(CandidateSkill).where(CandidateSkill.profile_id == profile.id))
-    skills_objs = skills_res.scalars().all()
-    prof_dict = {
-        "skills": [{"skill": s.skill} for s in skills_objs],
-        "preferences_json": profile.preferences_json,
-        "location": profile.location,
-        "salary_floor": profile.salary_floor
-    }
+    # Build Candidate Profile Dicts for all candidates
+    candidate_profile_dicts = []
+    for prof in all_profiles:
+        s_res = await db.execute(select(CandidateSkill).where(CandidateSkill.profile_id == prof.id))
+        s_objs = s_res.scalars().all()
+        candidate_profile_dicts.append({
+            "profile": prof,
+            "dict": {
+                "skills": [{"skill": s.skill} for s in s_objs],
+                "preferences_json": prof.preferences_json,
+                "location": prof.location,
+                "salary_floor": prof.salary_floor
+            }
+        })
 
     # Fetch existing jobs to prevent duplicates
     existing_stmt = select(Job)
@@ -312,564 +386,177 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
 
     new_jobs_added = 0
     scanned_count = 0
+    all_scanned_jobs = []
 
-    # 1. Scan ReliefWeb for global ICT & Humanitarian roles — NO geographic restriction
-    relief_adapter = ReliefWebAdapter()
-    global_queries = [
-        "ICT Specialist",
-        "Systems Administrator",
-        "Cybersecurity Analyst",
-        "ICT4D",
-        "IT Manager",
-        "Network Engineer",
-        "Digital Transformation",
-    ]
-    for query in global_queries:
-        try:
-            # No location filter → worldwide results from ReliefWeb
-            live_jobs = await relief_adapter.search(query=query, location=None)
-            scanned_count += len(live_jobs)
-            for j in live_jobs:
-                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-                if not is_dup:
-                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                    job_obj = Job(
-                        canonical_url=j["canonical_url"],
-                        title=j["title"],
-                        employer=j["employer"],
-                        location=j["location"],
-                        work_mode=j["work_mode"],
-                        salary_min=j["salary_min"],
-                        salary_max=j["salary_max"],
-                        currency=j["currency"],
-                        description=j["description"],
-                        posted_at=datetime.now(timezone.utc),
-                        raw_hash=raw_hash
-                    )
-                    db.add(job_obj)
-                    await db.flush()
+    # ── Rotating pagination: pick different pages/queries per cycle ──
+    visa_pages = _VISA_PAGE_ROTATIONS[cycle % len(_VISA_PAGE_ROTATIONS)]
+    rw_queries = _RELIEF_WEB_QUERIES[cycle % len(_RELIEF_WEB_QUERIES)]
+    un_queries = _UN_JOBS_QUERIES[cycle % len(_UN_JOBS_QUERIES)]
+    him_offsets = _HIMALAYAS_OFFSET_ROTATIONS[cycle % len(_HIMALAYAS_OFFSET_ROTATIONS)]
 
-                    features = JobFeature(
-                        job_id=job_obj.id,
-                        skills_json=["lan/wan & tcp/ip networking", "active directory", "cybersecurity & ids/ips", "disaster recovery & backup architecture"],
-                        seniority="Senior",
-                        industry="Humanitarian / NGO / Healthcare",
-                        visa_signal="indicated",
-                        remote_signal="hybrid",
-                        extracted_salary={"min": None, "max": None, "currency": "USD"}
-                    )
-                    db.add(features)
-                    await db.flush()
+    scan_logger.info(f"[Cycle #{cycle}] Using visa pages={visa_pages}, RW queries={rw_queries}, UN queries={un_queries}")
 
-                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                        profile_data=prof_dict,
-                        job_data=j,
-                        job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
-                    )
-
-                    db.add(JobMatch(
-                        job_id=job_obj.id,
-                        profile_id=profile.id,
-                        match_score=match_score,
-                        opportunity_score=opp_score,
-                        explanation_json=explanation,
-                        gaps_json=gaps
-                    ))
-
-                    existing_jobs.append(j)
-                    new_jobs_added += 1
-        except Exception as e:
-            print(f"Error scanning ReliefWeb: {e}")
-
-    # 2. Scan RemoteOK for global Remote Python / Systems / ICT roles
-    remote_adapter = RemoteOKAdapter()
-    for query in ["python", "devops", "systems", "cybersecurity", "ict"]:
-        try:
-            live_remote = await remote_adapter.search(query=query)
-            scanned_count += len(live_remote)
-            for j in live_remote:
-                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-                if not is_dup:
-                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                    job_obj = Job(
-                        canonical_url=j["canonical_url"],
-                        title=j["title"],
-                        employer=j["employer"],
-                        location=j["location"],
-                        work_mode=j["work_mode"],
-                        salary_min=j["salary_min"],
-                        salary_max=j["salary_max"],
-                        currency=j["currency"],
-                        description=j["description"],
-                        posted_at=datetime.now(timezone.utc),
-                        raw_hash=raw_hash
-                    )
-                    db.add(job_obj)
-                    await db.flush()
-
-                    features = JobFeature(
-                        job_id=job_obj.id,
-                        skills_json=["python & api development", "linux server administration", "cloud infrastructure"],
-                        seniority="Senior",
-                        industry="Technology / Software",
-                        visa_signal="possible",
-                        remote_signal="full_remote",
-                        extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
-                    )
-                    db.add(features)
-                    await db.flush()
-
-                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                        profile_data=prof_dict,
-                        job_data=j,
-                        job_features={"skills_json": features.skills_json, "visa_signal": "possible"}
-                    )
-
-                    db.add(JobMatch(
-                        job_id=job_obj.id,
-                        profile_id=profile.id,
-                        match_score=match_score,
-                        opportunity_score=opp_score,
-                        explanation_json=explanation,
-                        gaps_json=gaps
-                    ))
-
-                    existing_jobs.append(j)
-                    new_jobs_added += 1
-        except Exception as e:
-            print(f"Error scanning RemoteOK: {e}")
-
-    # 3. Scan UN Jobs for UN system / International Org ICT roles (worldwide)
-    from workers.adapters.un_jobs import UNJobsAdapter
-    un_adapter = UNJobsAdapter()
-    for query in ["ICT Specialist", "Cybersecurity", "Digital Transformation", "IT Manager"]:
-        try:
-            un_jobs = await un_adapter.search(query=query)
-            scanned_count += len(un_jobs)
-            for j in un_jobs:
-                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-                if not is_dup:
-                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                    job_obj = Job(
-                        canonical_url=j["canonical_url"],
-                        title=j["title"],
-                        employer=j["employer"],
-                        location=j["location"],
-                        work_mode=j["work_mode"],
-                        salary_min=j["salary_min"],
-                        salary_max=j["salary_max"],
-                        currency=j["currency"],
-                        description=j["description"],
-                        posted_at=datetime.now(timezone.utc),
-                        raw_hash=raw_hash
-                    )
-                    db.add(job_obj)
-                    await db.flush()
-                    features = JobFeature(
-                        job_id=job_obj.id,
-                        skills_json=["ict & systems administration", "network engineering", "cybersecurity"],
-                        seniority="Senior",
-                        industry="UN System / International Organisation",
-                        visa_signal="indicated",
-                        remote_signal="unknown",
-                        extracted_salary={}
-                    )
-                    db.add(features)
-                    await db.flush()
-                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                        profile_data=prof_dict, job_data=j,
-                        job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
-                    )
-                    db.add(JobMatch(
-                        job_id=job_obj.id, profile_id=profile.id,
-                        match_score=match_score, opportunity_score=opp_score,
-                        explanation_json=explanation, gaps_json=gaps
-                    ))
-                    existing_jobs.append(j)
-                    new_jobs_added += 1
-        except Exception as e:
-            print(f"Error scanning UN Jobs: {e}")
-
-    # 4. Scan Devex for INGO/NGO/Development sector ICT roles (worldwide)
-    from workers.adapters.devex import DevexAdapter
-    devex_adapter = DevexAdapter()
-    for query in ["ICT Specialist", "IT Manager", "Cybersecurity", "Digital"]:
-        try:
-            devex_jobs = await devex_adapter.search(query=query)
-            scanned_count += len(devex_jobs)
-            for j in devex_jobs:
-                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-                if not is_dup:
-                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                    job_obj = Job(
-                        canonical_url=j["canonical_url"],
-                        title=j["title"],
-                        employer=j["employer"],
-                        location=j["location"],
-                        work_mode=j["work_mode"],
-                        salary_min=j["salary_min"],
-                        salary_max=j["salary_max"],
-                        currency=j["currency"],
-                        description=j["description"],
-                        posted_at=datetime.now(timezone.utc),
-                        raw_hash=raw_hash
-                    )
-                    db.add(job_obj)
-                    await db.flush()
-                    features = JobFeature(
-                        job_id=job_obj.id,
-                        skills_json=["ict4d & humanitarian technology", "project management", "digital transformation"],
-                        seniority="Senior",
-                        industry="International Development / INGO",
-                        visa_signal="possible",
-                        remote_signal="unknown",
-                        extracted_salary={}
-                    )
-                    db.add(features)
-                    await db.flush()
-                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                        profile_data=prof_dict, job_data=j,
-                        job_features={"skills_json": features.skills_json, "visa_signal": "possible"}
-                    )
-                    db.add(JobMatch(
-                        job_id=job_obj.id, profile_id=profile.id,
-                        match_score=match_score, opportunity_score=opp_score,
-                        explanation_json=explanation, gaps_json=gaps
-                    ))
-                    existing_jobs.append(j)
-                    new_jobs_added += 1
-        except Exception as e:
-            print(f"Error scanning Devex: {e}")
-
-    # 5. Scan Global Visa Sponsorship & Relocation tech board
-    from workers.adapters.visa_sponsorship import VisaSponsorshipAdapter
+    # 1. Visa Sponsorship & European/Global Multi-Page (Arbeitnow rotating pages)
     visa_adapter = VisaSponsorshipAdapter()
-    for query in ["systems", "infrastructure", "python", "security", "engineer"]:
-        try:
-            sponsored_jobs = await visa_adapter.search(query=query)
-            scanned_count += len(sponsored_jobs)
-            for j in sponsored_jobs:
-                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-                if not is_dup:
-                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                    job_obj = Job(
-                        canonical_url=j["canonical_url"],
-                        title=j["title"],
-                        employer=j["employer"],
-                        location=j["location"],
-                        work_mode=j["work_mode"],
-                        salary_min=j["salary_min"],
-                        salary_max=j["salary_max"],
-                        currency=j["currency"],
-                        description=j["description"],
-                        posted_at=datetime.now(timezone.utc),
-                        raw_hash=raw_hash
-                    )
-                    db.add(job_obj)
-                    await db.flush()
-
-                    from workers.visa_detector import VisaDetector
-                    visa_sig, _ = VisaDetector.evaluate(j["title"], j["description"], j["employer"])
-
-                    features = JobFeature(
-                        job_id=job_obj.id,
-                        skills_json=["systems administration", "cloud infrastructure", "cybersecurity", "python"],
-                        seniority="Senior",
-                        industry="Global Technology / Enterprise",
-                        visa_signal=visa_sig or "indicated",
-                        remote_signal="relocation_offered",
-                        extracted_salary={}
-                    )
-                    db.add(features)
-                    await db.flush()
-
-                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                        profile_data=prof_dict, job_data=j,
-                        job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
-                    )
-                    db.add(JobMatch(
-                        job_id=job_obj.id, profile_id=profile.id,
-                        match_score=match_score, opportunity_score=opp_score,
-                        explanation_json=explanation, gaps_json=gaps
-                    ))
-                    existing_jobs.append(j)
-                    new_jobs_added += 1
-        except Exception as e:
-            print(f"Error scanning Visa Sponsorship board: {e}")
-
-    # 6. Scan Global Fellowships & Leadership Residencies (Fully Funded / Sponsored)
-    from workers.adapters.global_fellowships import GlobalFellowshipAdapter
-    fellowship_adapter = GlobalFellowshipAdapter()
     try:
-        fellowships = await fellowship_adapter.search(query="fellowship")
-        scanned_count += len(fellowships)
-        for j in fellowships:
-            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-            if not is_dup:
-                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                job_obj = Job(
-                    canonical_url=j["canonical_url"],
-                    title=j["title"],
-                    employer=j["employer"],
-                    location=j["location"],
-                    work_mode=j["work_mode"],
-                    salary_min=j["salary_min"],
-                    salary_max=j["salary_max"],
-                    currency=j["currency"],
-                    description=j["description"],
-                    posted_at=datetime.now(timezone.utc),
-                    raw_hash=raw_hash
-                )
-                db.add(job_obj)
-                await db.flush()
-
-                features = JobFeature(
-                    job_id=job_obj.id,
-                    skills_json=["lan/wan & tcp/ip networking", "cybersecurity & ids/ips", "cloud architecture", "ict4d & humanitarian technology"],
-                    seniority="Senior",
-                    industry="International Leadership & Tech Fellowship",
-                    visa_signal="sponsored",
-                    remote_signal="relocation_offered",
-                    extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
-                )
-                db.add(features)
-                await db.flush()
-
-                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                    profile_data=prof_dict, job_data=j,
-                    job_features={"skills_json": features.skills_json, "visa_signal": "sponsored"}
-                )
-                db.add(JobMatch(
-                    job_id=job_obj.id, profile_id=profile.id,
-                    match_score=match_score, opportunity_score=opp_score,
-                    explanation_json=explanation, gaps_json=gaps
-                ))
-                existing_jobs.append(j)
-                new_jobs_added += 1
+        v_jobs = await visa_adapter.search(query="", filters={"pages": visa_pages})
+        all_scanned_jobs.extend(v_jobs)
     except Exception as e:
-        print(f"Error scanning Global Fellowships: {e}")
+        scan_logger.warning(f"Visa adapter scan error: {e}")
 
-    # 7. Scan WeWorkRemotely for global tech/DevOps/Sysadmin roles
-    from workers.adapters.we_work_remotely import WeWorkRemotelyAdapter
-    wwr_adapter = WeWorkRemotelyAdapter()
-    try:
-        wwr_jobs = await wwr_adapter.search(query="devops")
-        scanned_count += len(wwr_jobs)
-        for j in wwr_jobs:
-            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-            if not is_dup:
-                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                job_obj = Job(
-                    canonical_url=j["canonical_url"],
-                    title=j["title"],
-                    employer=j["employer"],
-                    location=j["location"],
-                    work_mode=j["work_mode"],
-                    salary_min=j["salary_min"],
-                    salary_max=j["salary_max"],
-                    currency=j["currency"],
-                    description=j["description"],
-                    posted_at=datetime.now(timezone.utc),
-                    raw_hash=raw_hash
-                )
-                db.add(job_obj)
-                await db.flush()
-
-                features = JobFeature(
-                    job_id=job_obj.id,
-                    skills_json=["systems administration", "cloud infrastructure", "cybersecurity & ids/ips", "python & api development"],
-                    seniority="Senior",
-                    industry="Technology / Cloud Infrastructure",
-                    visa_signal="indicated",
-                    remote_signal="full_remote",
-                    extracted_salary={}
-                )
-                db.add(features)
-                await db.flush()
-
-                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                    profile_data=prof_dict, job_data=j,
-                    job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
-                )
-                db.add(JobMatch(
-                    job_id=job_obj.id, profile_id=profile.id,
-                    match_score=match_score, opportunity_score=opp_score,
-                    explanation_json=explanation, gaps_json=gaps
-                ))
-                existing_jobs.append(j)
-                new_jobs_added += 1
-    except Exception as e:
-        print(f"Error scanning WeWorkRemotely: {e}")
-
-    # 8. Scan Remotive for global live remote engineering & sysadmin roles
-    from workers.adapters.remotive import RemotiveAdapter
+    # 2. Remotive Multi-Category
     remotive_adapter = RemotiveAdapter()
     try:
-        rem_jobs = await remotive_adapter.search(query="devops")
-        scanned_count += len(rem_jobs)
-        for j in rem_jobs:
-            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-            if not is_dup:
-                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                job_obj = Job(
-                    canonical_url=j["canonical_url"],
-                    title=j["title"],
-                    employer=j["employer"],
-                    location=j["location"],
-                    work_mode=j["work_mode"],
-                    salary_min=j["salary_min"],
-                    salary_max=j["salary_max"],
-                    currency=j["currency"],
-                    description=j["description"],
-                    posted_at=datetime.now(timezone.utc),
-                    raw_hash=raw_hash
-                )
-                db.add(job_obj)
-                await db.flush()
-
-                features = JobFeature(
-                    job_id=job_obj.id,
-                    skills_json=["systems administration", "azure & cloud", "linux server administration", "cybersecurity"],
-                    seniority="Senior",
-                    industry="Technology / Cloud / Systems",
-                    visa_signal="possible",
-                    remote_signal="full_remote",
-                    extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
-                )
-                db.add(features)
-                await db.flush()
-
-                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                    profile_data=prof_dict, job_data=j,
-                    job_features={"skills_json": features.skills_json, "visa_signal": "possible"}
-                )
-                db.add(JobMatch(
-                    job_id=job_obj.id, profile_id=profile.id,
-                    match_score=match_score, opportunity_score=opp_score,
-                    explanation_json=explanation, gaps_json=gaps
-                ))
-                existing_jobs.append(j)
-                new_jobs_added += 1
+        r_jobs = await remotive_adapter.search(filters={"categories": ["devops-sysadmin", "software-dev", "data"]})
+        all_scanned_jobs.extend(r_jobs)
     except Exception as e:
-        print(f"Error scanning Remotive: {e}")
+        scan_logger.warning(f"Remotive adapter scan error: {e}")
 
-    # 9. Scan Jobicy for real-time live remote devops, security & sysadmin jobs
-    from workers.adapters.jobicy import JobicyAdapter
+    # 3. Jobicy Multi-Tag
     jobicy_adapter = JobicyAdapter()
-    for tag in ["devops", "security", "sysadmin"]:
-        try:
-            jobicy_jobs = await jobicy_adapter.search(query=tag)
-            scanned_count += len(jobicy_jobs)
-            for j in jobicy_jobs:
-                is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-                if not is_dup:
-                    raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                    job_obj = Job(
-                        canonical_url=j["canonical_url"],
-                        title=j["title"],
-                        employer=j["employer"],
-                        location=j["location"],
-                        work_mode=j["work_mode"],
-                        salary_min=j["salary_min"],
-                        salary_max=j["salary_max"],
-                        currency=j["currency"],
-                        description=j["description"],
-                        posted_at=datetime.now(timezone.utc),
-                        raw_hash=raw_hash
-                    )
-                    db.add(job_obj)
-                    await db.flush()
+    try:
+        j_jobs = await jobicy_adapter.search(filters={"tags": ["devops", "security", "sysadmin", "cloud", "python", "data"]})
+        all_scanned_jobs.extend(j_jobs)
+    except Exception as e:
+        scan_logger.warning(f"Jobicy adapter scan error: {e}")
 
-                    features = JobFeature(
-                        job_id=job_obj.id,
-                        skills_json=["systems administration", "cloud infrastructure", "cybersecurity", "azure & cloud"],
-                        seniority="Senior",
-                        industry="Global Technology / SaaS",
-                        visa_signal="indicated",
-                        remote_signal="full_remote",
-                        extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
-                    )
-                    db.add(features)
-                    await db.flush()
-
-                    match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                        profile_data=prof_dict, job_data=j,
-                        job_features={"skills_json": features.skills_json, "visa_signal": "indicated"}
-                    )
-                    db.add(JobMatch(
-                        job_id=job_obj.id, profile_id=profile.id,
-                        match_score=match_score, opportunity_score=opp_score,
-                        explanation_json=explanation, gaps_json=gaps
-                    ))
-                    existing_jobs.append(j)
-                    new_jobs_added += 1
-        except Exception as e:
-            print(f"Error scanning Jobicy: {e}")
-
-    # 10. Scan Himalayas for real-time live remote tech & systems roles
-    from workers.adapters.himalayas import HimalayasAdapter
+    # 4. Himalayas Rotating Offsets
     himalayas_adapter = HimalayasAdapter()
     try:
-        him_jobs = await himalayas_adapter.search()
-        scanned_count += len(him_jobs)
-        for j in him_jobs:
-            is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
-            if not is_dup:
-                raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
-                job_obj = Job(
-                    canonical_url=j["canonical_url"],
-                    title=j["title"],
-                    employer=j["employer"],
-                    location=j["location"],
-                    work_mode=j["work_mode"],
-                    salary_min=j["salary_min"],
-                    salary_max=j["salary_max"],
-                    currency=j["currency"],
-                    description=j["description"],
-                    posted_at=datetime.now(timezone.utc),
-                    raw_hash=raw_hash
-                )
-                db.add(job_obj)
-                await db.flush()
-
-                features = JobFeature(
-                    job_id=job_obj.id,
-                    skills_json=["systems administration", "cloud infrastructure", "cybersecurity & ids/ips", "python & api development"],
-                    seniority="Senior",
-                    industry="Technology / Enterprise Software",
-                    visa_signal="possible",
-                    remote_signal="full_remote",
-                    extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
-                )
-                db.add(features)
-                await db.flush()
-
-                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
-                    profile_data=prof_dict, job_data=j,
-                    job_features={"skills_json": features.skills_json, "visa_signal": "possible"}
-                )
-                db.add(JobMatch(
-                    job_id=job_obj.id, profile_id=profile.id,
-                    match_score=match_score, opportunity_score=opp_score,
-                    explanation_json=explanation, gaps_json=gaps
-                ))
-                existing_jobs.append(j)
-                new_jobs_added += 1
+        h_jobs = await himalayas_adapter.search(filters={"offsets": him_offsets})
+        all_scanned_jobs.extend(h_jobs)
     except Exception as e:
-        print(f"Error scanning Himalayas: {e}")
+        scan_logger.warning(f"Himalayas adapter scan error: {e}")
+
+    # 5. RemoteOK Global Tech
+    remote_adapter = RemoteOKAdapter()
+    try:
+        rok_jobs = await remote_adapter.search(query="")
+        all_scanned_jobs.extend(rok_jobs)
+    except Exception as e:
+        scan_logger.warning(f"RemoteOK adapter scan error: {e}")
+
+    # 6. UN Jobs & Humanitarian Live Feeds (rotating queries)
+    un_adapter = UNJobsAdapter()
+    for q in un_queries:
+        try:
+            un_list = await un_adapter.search(query=q)
+            all_scanned_jobs.extend(un_list)
+        except Exception as e:
+            scan_logger.warning(f"UNJobs scan error ({q}): {e}")
+
+    # 7. ReliefWeb Category Search Feeds (rotating queries)
+    relief_adapter = ReliefWebAdapter()
+    for q in rw_queries:
+        try:
+            rw_list = await relief_adapter.search(query=q)
+            all_scanned_jobs.extend(rw_list)
+        except Exception as e:
+            scan_logger.warning(f"ReliefWeb scan error ({q}): {e}")
+
+    # 8. WeWorkRemotely Feeds
+    wwr_adapter = WeWorkRemotelyAdapter()
+    try:
+        wwr_list = await wwr_adapter.search(query="devops")
+        all_scanned_jobs.extend(wwr_list)
+    except Exception as e:
+        scan_logger.warning(f"WWR scan error: {e}")
+
+    # 9. Global Fellowships
+    fellowship_adapter = GlobalFellowshipAdapter()
+    try:
+        f_jobs = await fellowship_adapter.search(query="fellowship")
+        all_scanned_jobs.extend(f_jobs)
+    except Exception as e:
+        scan_logger.warning(f"Fellowships scan error: {e}")
+
+    scanned_count = len(all_scanned_jobs)
+
+    # Ingest, Deduplicate, Store, and Score for ALL Candidate Pools
+    for j in all_scanned_jobs:
+        is_dup, _ = Deduplicator.is_duplicate(j, existing_jobs)
+        if not is_dup:
+            raw_hash = Deduplicator.compute_fingerprint(j["title"], j["employer"], j["description"])
+
+            # Extra dedup: check if raw_hash already exists in DB
+            hash_check = await db.execute(select(Job).where(Job.raw_hash == raw_hash).limit(1))
+            if hash_check.scalar_one_or_none():
+                continue
+
+            job_obj = Job(
+                canonical_url=j["canonical_url"],
+                title=j["title"],
+                employer=j["employer"],
+                location=j["location"],
+                work_mode=j["work_mode"],
+                salary_min=j["salary_min"],
+                salary_max=j["salary_max"],
+                currency=j["currency"],
+                description=j["description"],
+                posted_at=datetime.now(timezone.utc),
+                raw_hash=raw_hash
+            )
+            db.add(job_obj)
+            try:
+                await db.flush()
+            except Exception:
+                await db.rollback()
+                continue
+
+            visa_sig, _ = VisaDetector.evaluate(j["title"], j["description"], j["employer"])
+
+            # Dynamically extract skills mentioned in the job text across registered candidate skill pools
+            job_text = f"{j.get('title', '')} {j.get('description', '')}".lower()
+            all_known_skills = {
+                s.get("skill", "").strip().lower()
+                for c_entry in candidate_profile_dicts
+                for s in c_entry["dict"].get("skills", [])
+                if s.get("skill")
+            }
+            job_skills = [sk for sk in all_known_skills if sk in job_text]
+
+            features = JobFeature(
+                job_id=job_obj.id,
+                skills_json=job_skills,
+                seniority=j.get("seniority") or "Mid-Senior",
+                industry=j.get("industry") or "General",
+                visa_signal=visa_sig or "indicated",
+                remote_signal="full_remote" if j["work_mode"] == "remote" else "hybrid",
+                extracted_salary={"min": j["salary_min"], "max": j["salary_max"], "currency": j["currency"]}
+            )
+            db.add(features)
+            await db.flush()
+
+            # Score this job for EVERY candidate pool in the system
+            for c_entry in candidate_profile_dicts:
+                c_prof = c_entry["profile"]
+                c_dict = c_entry["dict"]
+                match_score, opp_score, explanation, gaps = MatchingEngine.calculate_scores(
+                    profile_data=c_dict,
+                    job_data=j,
+                    job_features={"skills_json": features.skills_json, "visa_signal": features.visa_signal}
+                )
+
+                db.add(JobMatch(
+                    job_id=job_obj.id,
+                    profile_id=c_prof.id,
+                    match_score=match_score,
+                    opportunity_score=opp_score,
+                    explanation_json=explanation,
+                    gaps_json=gaps
+                ))
+
+            existing_jobs.append(j)
+            new_jobs_added += 1
 
     await db.commit()
 
-
-
-
     # ── Auto-Apply to all high-fit jobs discovered during scan ──
-    from app.services.auto_applier import AutoApplier
     stmt = (
         select(Job, JobMatch)
         .join(JobMatch, JobMatch.job_id == Job.id)
         .where(JobMatch.match_score >= 80)
-        .order_by(desc(JobMatch.match_score))
+        .order_by(desc(JobMatch.created_at))
     )
     res = await db.execute(stmt)
     high_matches = res.all()
@@ -877,10 +564,12 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
     auto_applied_count = 0
     for j_obj, match in high_matches:
         try:
+            # Find the corresponding profile
+            target_prof = next((p for p in all_profiles if p.id == match.profile_id), primary_profile)
             applied = await AutoApplier.process_job(
                 db=db,
                 job=j_obj,
-                profile=profile,
+                profile=target_prof,
                 match_score=match.match_score,
                 opportunity_score=match.opportunity_score,
                 explanation=match.explanation_json or {}
@@ -888,14 +577,13 @@ async def trigger_job_scan(db: AsyncSession = Depends(get_db)):
             if applied:
                 auto_applied_count += 1
         except Exception as e:
-            print(f"Auto-apply error on job {j_obj.id}: {e}")
+            scan_logger.warning(f"Auto-apply error on job {j_obj.id}: {e}")
 
     return {
         "status": "success",
-        "message": f"Global scan completed: ReliefWeb, RemoteOK, UN Jobs, Devex, Visa Sponsorship Boards — worldwide coverage.",
-        "scanned_count": max(scanned_count, 20),
+        "message": f"Global scan complete: scanned {scanned_count} jobs across live feeds.",
+        "scanned_count": scanned_count,
         "new_jobs_added": new_jobs_added,
-        "auto_applied_count": auto_applied_count
+        "auto_applied_count": auto_applied_count,
+        "cycle": cycle
     }
-
-

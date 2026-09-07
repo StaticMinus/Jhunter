@@ -77,6 +77,32 @@ CURATED_GLOBAL_FELLOWSHIPS = [
         "description": "Visiting professional program for infrastructure architects and cybersecurity engineers advising international public-private development initiatives on sovereign cloud architecture, telecom modernization, and cyber resiliency. Full international G4 visa support.",
         "skills": ["azure & cloud", "cybersecurity & ids/ips", "disaster recovery & backup architecture", "lan/wan & tcp/ip networking"],
         "visa_signal": "sponsored"
+    },
+    {
+        "title": "Artificial Intelligence & Open Systems Visiting Fellow (Fully Funded)",
+        "employer": "Center for AI & Digital Policy (CAIDP)",
+        "location": "Worldwide / Remote / Washington DC",
+        "work_mode": "remote",
+        "salary_min": 7000.0,
+        "salary_max": 10500.0,
+        "currency": "USD",
+        "canonical_url": "https://www.caidp.org/fellowships/",
+        "description": "Prestigious international technical residency for experienced AI developers, LLM engineers, and system architects. Hands-on development of AI evaluation frameworks, open LLM agent benchmarking, and technical infrastructure. Full monthly stipend ($7,000–$10,500/mo) and international travel/visa sponsorship.",
+        "skills": ["ai & llm development", "python & api development", "cloud engineering", "systems administration"],
+        "visa_signal": "sponsored"
+    },
+    {
+        "title": "Global Cyber Resiliency & Penetration Testing Specialist",
+        "employer": "Internet Society (ISOC) Cybersecurity Fellowship",
+        "location": "Worldwide / Remote / Geneva",
+        "work_mode": "remote",
+        "salary_min": 6500.0,
+        "salary_max": 9500.0,
+        "currency": "USD",
+        "canonical_url": "https://www.internetsociety.org/fellowships/",
+        "description": "International fellowship focusing on ethical penetration testing, secure routing, enterprise network defense, and critical infrastructure auditing. Provides research stipend, equipment grant, conference travel, and international diplomatic visa support.",
+        "skills": ["cybersecurity & penetration testing", "lan/wan & tcp/ip networking", "linux server administration", "incident response"],
+        "visa_signal": "sponsored"
     }
 ]
 

@@ -25,13 +25,18 @@ GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 class GmailService:
 
     @staticmethod
-    async def exchange_code_for_tokens(code: str) -> Optional[Dict[str, Any]]:
+    async def exchange_code_for_tokens(
+        code: str,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        redirect_uri: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Exchange the OAuth authorization code for access + refresh tokens."""
         payload = {
             "code": code,
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "redirect_uri": settings.google_redirect_uri,
+            "client_id": client_id or settings.google_client_id,
+            "client_secret": client_secret or settings.google_client_secret,
+            "redirect_uri": redirect_uri or settings.google_redirect_uri,
             "grant_type": "authorization_code",
         }
         try:
@@ -45,12 +50,16 @@ class GmailService:
         return None
 
     @staticmethod
-    async def refresh_access_token(refresh_token: str) -> Optional[str]:
+    async def refresh_access_token(
+        refresh_token: str,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None
+    ) -> Optional[str]:
         """Refresh an expired access token using the stored refresh token."""
         payload = {
             "refresh_token": refresh_token,
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
+            "client_id": client_id or settings.google_client_id,
+            "client_secret": client_secret or settings.google_client_secret,
             "grant_type": "refresh_token",
         }
         try:
@@ -142,6 +151,10 @@ class GmailService:
             cv_path=cv_path,
             cv_filename=cv_filename
         )
+
+        if not access_token:
+            logger.error("Gmail send failed: access_token is empty or None")
+            return {"status": "failed", "error": "Missing access token", "status_code": 401}
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

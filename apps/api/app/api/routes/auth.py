@@ -32,31 +32,80 @@ async def get_db():
 
 
 @router.get("/google/authorize")
-async def google_authorize():
-    """Redirect the user to Google's OAuth consent screen."""
+async def google_authorize(user_email: str = None, db: AsyncSession = Depends(get_db)):
+    """
+    Redirect the user to Google's OAuth consent screen.
+    Uses the user's own OAuth client_id if stored (per-user GCP project),
+    otherwise falls back to the global settings client_id.
+    """
+    import urllib.parse
+    import json
+
+    target_email = user_email or settings.default_candidate_email
+
+    # Look up the user's own OAuth client credentials if stored
+    client_id = settings.google_client_id  # default fallback
+    user_res = await db.execute(select(User).where(User.email == target_email))
+    user = user_res.scalar_one_or_none()
+    if user and user.google_tokens_encrypted:
+        try:
+            stored = json.loads(user.google_tokens_encrypted)
+            if stored.get("client_id"):
+                client_id = stored["client_id"]
+        except (json.JSONDecodeError, Exception):
+            pass
+
+    # Encode user_email into state so the callback knows which user this is for
+    state = urllib.parse.quote(target_email)
+
     auth_url = (
         f"https://accounts.google.com/o/oauth2/v2/auth?"
-        f"client_id={settings.google_client_id}&"
+        f"client_id={client_id}&"
         f"redirect_uri={settings.google_redirect_uri}&"
         f"scope=https://www.googleapis.com/auth/gmail.send "
         f"https://www.googleapis.com/auth/gmail.readonly "
         f"https://www.googleapis.com/auth/userinfo.email&"
-        f"response_type=code&access_type=offline&prompt=consent"
+        f"response_type=code&access_type=offline&prompt=consent&"
+        f"state={state}"
     )
     return RedirectResponse(url=auth_url)
 
 
 @router.get("/google/callback")
-async def google_oauth_callback(code: str = None, error: str = None, db: AsyncSession = Depends(get_db)):
+async def google_oauth_callback(code: str = None, error: str = None, state: str = None, db: AsyncSession = Depends(get_db)):
     """
     Google redirects here after user approves. Exchange code for tokens
-    and save them so the system can send Gmail on David's behalf.
+    and save them for the correct user (identified via state parameter).
     """
+    import urllib.parse
+
     if error or not code:
         raise HTTPException(status_code=400, detail=f"OAuth error: {error or 'no code received'}")
 
-    # Exchange code for access_token + refresh_token
-    tokens = await GmailService.exchange_code_for_tokens(code)
+    # Decode state to determine which user this consent is for
+    target_email = urllib.parse.unquote(state) if state else "davidolagbenro35@gmail.com"
+    logger.info(f"OAuth callback for user: {target_email}")
+
+    # Find user first to use their own client_id and client_secret if configured
+    user_res = await db.execute(select(User).where(User.email == target_email))
+    user = user_res.scalar_one_or_none()
+
+    client_id = settings.google_client_id
+    client_secret = settings.google_client_secret
+
+    if user and user.google_tokens_encrypted:
+        try:
+            stored = json.loads(user.google_tokens_encrypted)
+            if stored.get("client_id") and stored.get("client_secret"):
+                client_id = stored["client_id"]
+                client_secret = stored["client_secret"]
+        except (json.JSONDecodeError, Exception):
+            pass
+
+    # Exchange code for access_token + refresh_token using the correct client
+    tokens = await GmailService.exchange_code_for_tokens(
+        code, client_id=client_id, client_secret=client_secret
+    )
     if not tokens:
         raise HTTPException(status_code=500, detail="Failed to exchange authorization code for tokens")
 
@@ -66,18 +115,26 @@ async def google_oauth_callback(code: str = None, error: str = None, db: AsyncSe
     # Get the real Gmail address of the user
     gmail_address = await GmailService.get_user_email(access_token)
     if not gmail_address:
-        gmail_address = "david@gmail.com"
+        gmail_address = target_email
 
-    # Store tokens encrypted in the user record
-    profile = await get_or_create_default_profile(db)
-    user_res = await db.execute(select(User).where(User.id == profile.user_id))
-    user = user_res.scalar_one()
+    if not user:
+        # Fallback: try by gmail_address
+        user_res = await db.execute(select(User).where(User.email == gmail_address))
+        user = user_res.scalar_one_or_none()
 
-    # Store tokens as JSON (in production, encrypt this with Fernet)
+    if not user:
+        # Last resort: use the default profile's user
+        profile = await get_or_create_default_profile(db)
+        user_res = await db.execute(select(User).where(User.id == profile.user_id))
+        user = user_res.scalar_one()
+
+    # Store tokens as JSON with the client credentials for future refresh
     token_payload = json.dumps({
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "gmail_address": gmail_address
+        "gmail_address": gmail_address,
+        "client_id": client_id,
+        "client_secret": client_secret
     })
     user.google_tokens_encrypted = token_payload
     user.email = gmail_address

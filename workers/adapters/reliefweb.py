@@ -18,69 +18,66 @@ class ReliefWebAdapter(JobSourceAdapter):
             base_url="https://reliefweb.int/jobs/rss.xml"
         )
 
-    async def search(self, query: str, location: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def search(self, query: str = "", location: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
+        jobs = []
+        q_enc = query.replace(" ", "+") if query else "ICT"
+        url = f"https://reliefweb.int/jobs/rss.xml?search={q_enc}"
+
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers=headers, follow_redirects=True) as client:
-                res = await client.get(self.base_url)
+            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+                res = await client.get(url)
                 if res.status_code == 200:
                     root = ET.fromstring(res.text)
                     items = root.findall(".//item")
-                    jobs = []
-                    q_lower = query.lower() if query else ""
 
                     for item in items:
                         title = item.findtext("title", "").strip()
                         link = item.findtext("link", "").strip()
                         desc = item.findtext("description", "").strip()
+                        pub_date = item.findtext("pubDate", "")
 
-                        # Filter by relevant query keywords
-                        combined = f"{title} {desc}".lower()
-                        if q_lower and q_lower not in combined and not any(kw in combined for kw in ["ict", "it", "systems", "cyber", "technology", "digital", "data", "engineer"]):
-                            continue
+                        # Check for emails inside description text
+                        emails = re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', desc)
+                        valid = [
+                            e for e in set(emails)
+                            if "reliefweb.int" not in e.lower()
+                            and not e.endswith(".png")
+                            and not e.endswith(".jpg")
+                            and not any(e.lower().startswith(p) for p in ["noreply", "no-reply", "support"])
+                        ]
+                        if valid:
+                            desc += f"\n\nDIRECT_APPLICATION_EMAIL: {valid[0]}"
 
-                        # Deep scrape page for direct HR email
-                        direct_email = None
-                        try:
-                            page_res = await client.get(link, timeout=6.0)
-                            if page_res.status_code == 200:
-                                emails = re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', page_res.text)
-                                valid = [
-                                    e for e in set(emails)
-                                    if "reliefweb.int" not in e.lower()
-                                    and not e.endswith(".png")
-                                    and not e.endswith(".jpg")
-                                    and not any(e.lower().startswith(p) for p in ["noreply", "no-reply", "support"])
-                                ]
-                                if valid:
-                                    direct_email = valid[0]
-                                    desc += f"\n\nDIRECT_APPLICATION_EMAIL: {direct_email}"
-                        except Exception:
-                            pass
+                        employer = "International Humanitarian Organisation"
+                        if " - " in title:
+                            parts = title.split(" - ")
+                            if len(parts) >= 2:
+                                employer = parts[-1].strip()
 
                         raw = {
                             "external_id": f"rw_{abs(hash(link))}",
-                            "canonical_url": link,
+                            "canonical_url": link or "https://reliefweb.int",
                             "title": title,
-                            "employer": "International Humanitarian Organisation",
+                            "employer": employer,
                             "location": "Worldwide / International",
-                            "work_mode": "remote" if "remote" in combined else "hybrid",
+                            "work_mode": "remote" if "remote" in (title + desc).lower() else "hybrid",
                             "salary_min": None,
                             "salary_max": None,
                             "currency": "USD",
-                            "description": desc,
-                            "posted_at": datetime.now(timezone.utc).isoformat()
+                            "description": desc or "Humanitarian IT and systems role.",
+                            "posted_at": pub_date or datetime.now(timezone.utc).isoformat()
                         }
                         jobs.append(self.normalize(raw))
-                        if len(jobs) >= 12:
+                        if len(jobs) >= 25:
                             break
-
-                    return jobs
         except Exception as e:
             print(f"ReliefWeb RSS error: {e}")
-        return []
+
+        return jobs
+
 
     def normalize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         return {
